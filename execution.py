@@ -121,9 +121,9 @@ def execute_trade_node(state: dict) -> dict:
         return {"trade_result": {"status": "skipped", "reason": "no decision"}}
 
     direction = decision["decision"]
-    entry_price = decision["entry_price"]
-    stop_loss = decision["stop_loss"]
-    take_profit = decision["take_profit"]
+    entry_price = float(decision["entry_price"])
+    stop_loss = float(decision["stop_loss"])
+    take_profit = float(decision["take_profit"])
 
     deribit_symbol = to_deribit_symbol(symbol)
     side = "buy" if direction == "LONG" else "sell"

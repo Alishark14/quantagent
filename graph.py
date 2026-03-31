@@ -106,6 +106,15 @@ def run_analysis(
         "chart_trend_img": "",
         "decision": {},
         "trade_result": {},
+        "indicator_signal": "neutral",
+        "pattern_signal": "neutral",
+        "trend_signal": "neutral",
+        "position_size": 0.0,
+        "sizing_details": {},
+        "indicator_usage": {},
+        "pattern_usage": {},
+        "trend_usage": {},
+        "decision_usage": {},
     }
 
     logger.info(f"=== QuantAgent cycle: {symbol} / {timeframe} ===")

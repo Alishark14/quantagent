@@ -32,6 +32,7 @@ quantagent.log
 
 # Node
 node_modules/
+dashboard/frontend/node_modules/
 dashboard/frontend/dist/
 
 # IDE

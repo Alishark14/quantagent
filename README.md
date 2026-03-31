@@ -2,7 +2,7 @@
 
 Multi-agent LLM trading system built on LangGraph, based on the [QuantAgent paper](https://arxiv.org/abs/2509.09995).
 
-Four specialized agents analyze OHLC price data in parallel, then a decision agent aggregates their signals into a LONG/SHORT trade with risk parameters. Trades execute on Deribit Testnet (Amsterdam-based, works in all EU countries).
+Four specialized agents analyze OHLC price data in parallel, then a decision agent aggregates their signals into a LONG/SHORT trade with risk parameters. Trades execute on either **Deribit Testnet** or **dYdX v4 Testnet**, switchable via `EXCHANGE=` in `.env`.
 
 ## Architecture
 
@@ -42,9 +42,22 @@ cp .env.example .env
 ### API Keys Needed
 
 1. **Anthropic API Key** — Get from [console.anthropic.com](https://console.anthropic.com)
-2. **Deribit Testnet** — Sign up at [test.deribit.com](https://test.deribit.com) (no KYC needed)
+
+2. **Deribit Testnet** (`EXCHANGE=deribit`) — Sign up at [test.deribit.com](https://test.deribit.com) (no KYC)
    - Go to Account > API Keys > Create new key
    - Enable **trade** scope
+   - Set `DERIBIT_TESTNET_API_KEY` and `DERIBIT_TESTNET_SECRET` in `.env`
+
+3. **dYdX v4 Testnet** (`EXCHANGE=dydx`) — [v4.testnet.dydx.exchange](https://v4.testnet.dydx.exchange)
+   - Connect a wallet and create an account
+   - Go to Settings > Export mnemonic (24-word phrase)
+   - Get testnet USDC from the faucet (button in the UI)
+   - Set `DYDX_MNEMONIC` and `DYDX_ADDRESS` in `.env`
+
+**Test your connection:**
+```bash
+python test_exchange.py
+```
 
 ## Usage
 
@@ -80,7 +93,8 @@ quantagent/
 ├── graph.py             # LangGraph workflow definition
 ├── state.py             # Shared state schema
 ├── config.py            # Configuration
-├── execution.py         # Deribit testnet execution
+├── execution.py         # Exchange execution (Deribit + dYdX)
+├── test_exchange.py     # Connection test script
 ├── agents/
 │   ├── indicator.py     # IndicatorAgent
 │   ├── pattern.py       # PatternAgent (vision)

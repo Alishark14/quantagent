@@ -9,9 +9,17 @@ class Config:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     MODEL_NAME: str = "claude-sonnet-4-20250514"
 
+    # Exchange selection
+    EXCHANGE: str = os.getenv("EXCHANGE", "deribit")  # "deribit" or "dydx"
+    EXCHANGE_TESTNET: bool = os.getenv("EXCHANGE_TESTNET", "true").lower() == "true"
+
     # Deribit Testnet
     DERIBIT_TESTNET_API_KEY: str = os.getenv("DERIBIT_TESTNET_API_KEY", "")
     DERIBIT_TESTNET_SECRET: str = os.getenv("DERIBIT_TESTNET_SECRET", "")
+
+    # dYdX v4
+    DYDX_MNEMONIC: str = os.getenv("DYDX_MNEMONIC", "")   # 24-word secret phrase
+    DYDX_ADDRESS: str = os.getenv("DYDX_ADDRESS", "")     # dydx1... chain address
 
     # Data fetching exchange (public OHLC, no auth needed)
     DATA_EXCHANGE: str = os.getenv("DATA_EXCHANGE", "bybit")

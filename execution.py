@@ -1,4 +1,4 @@
-"""Execute paper trades on Deribit Testnet via CCXT."""
+"""Execute trades on testnet via CCXT. Supports Deribit and dYdX v4."""
 
 import logging
 import threading
@@ -10,43 +10,75 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-# Map common "BTCUSDT"-style symbols to Deribit perpetual instrument names
+# Symbol maps per exchange
 _DERIBIT_SYMBOL_MAP = {
     "BTC": "BTC/USD:BTC",
     "ETH": "ETH/USD:ETH",
 }
 
-
-def to_deribit_symbol(symbol: str) -> str:
-    """Convert 'BTCUSDT' / 'ETHUSDT' to Deribit perpetual format.
-
-    Examples:
-        "BTCUSDT" -> "BTC/USD:BTC"
-        "ETHUSDT" -> "ETH/USD:ETH"
-        "BTC/USD:BTC" -> "BTC/USD:BTC"  (passthrough)
-    """
-    if ":" in symbol:
-        return symbol
-    for base, deribit_sym in _DERIBIT_SYMBOL_MAP.items():
-        if symbol.startswith(base):
-            return deribit_sym
-    raise ValueError(
-        f"No Deribit perpetual mapping for '{symbol}'. "
-        f"Supported bases: {list(_DERIBIT_SYMBOL_MAP.keys())}"
-    )
+_DYDX_SYMBOL_MAP = {
+    "BTC": "BTC/USD:USD",
+    "ETH": "ETH/USD:USD",
+}
 
 
-def get_testnet_client() -> ccxt.deribit:
-    """Create a CCXT Deribit instance pointed at the testnet."""
-    exchange = ccxt.deribit(
-        {
+def get_exchange_client() -> ccxt.Exchange:
+    """Create the appropriate CCXT exchange client based on Config.EXCHANGE."""
+    exchange_name = Config.EXCHANGE.lower()
+
+    if exchange_name == "deribit":
+        exchange = ccxt.deribit({
             "apiKey": Config.DERIBIT_TESTNET_API_KEY,
             "secret": Config.DERIBIT_TESTNET_SECRET,
             "enableRateLimit": True,
-        }
+        })
+        if Config.EXCHANGE_TESTNET:
+            exchange.set_sandbox_mode(True)
+        return exchange
+
+    elif exchange_name == "dydx":
+        exchange = ccxt.dydx({
+            "apiKey": Config.DYDX_ADDRESS,
+            "secret": Config.DYDX_MNEMONIC,
+            "enableRateLimit": True,
+        })
+        if Config.EXCHANGE_TESTNET:
+            exchange.set_sandbox_mode(True)
+        return exchange
+
+    else:
+        raise ValueError(
+            f"Unsupported exchange: '{exchange_name}'. Use 'deribit' or 'dydx'."
+        )
+
+
+def to_exchange_symbol(symbol: str) -> str:
+    """Convert 'BTCUSDT' to the exchange-specific perpetual symbol format."""
+    if "/" in symbol:
+        return symbol
+
+    exchange_name = Config.EXCHANGE.lower()
+    symbol_map = _DYDX_SYMBOL_MAP if exchange_name == "dydx" else _DERIBIT_SYMBOL_MAP
+
+    for base, mapped in symbol_map.items():
+        if symbol.upper().startswith(base):
+            return mapped
+
+    raise ValueError(
+        f"No symbol mapping for '{symbol}' on {exchange_name}. "
+        f"Supported bases: {list(symbol_map.keys())}"
     )
-    exchange.set_sandbox_mode(True)
-    return exchange
+
+
+def usd_to_contracts(position_size_usd: float, entry_price: float, exchange_name: str) -> float:
+    """Convert USD position size to contract quantity for the exchange.
+
+    Deribit: USD-notional contracts — amount IS the USD value.
+    dYdX:    base-currency contracts — amount = USD / price.
+    """
+    if exchange_name == "dydx":
+        return round(position_size_usd / entry_price, 6)
+    return position_size_usd  # deribit
 
 
 _TIMEFRAME_MINUTES = {
@@ -59,7 +91,12 @@ _TIMEFRAME_MINUTES = {
 }
 
 
-def schedule_forced_exit(symbol: str, timeframe: str, forecast_candles: int, exchange: ccxt.deribit) -> None:
+def schedule_forced_exit(
+    symbol: str,
+    timeframe: str,
+    forecast_candles: int,
+    exchange: ccxt.Exchange,
+) -> None:
     """Schedule a time-based forced exit after forecast_candles × timeframe duration.
 
     Starts a daemon background thread that closes any open position for the
@@ -108,10 +145,10 @@ def schedule_forced_exit(symbol: str, timeframe: str, forecast_candles: int, exc
 
 
 def execute_trade_node(state: dict) -> dict:
-    """LangGraph node: execute the trade on Deribit Testnet.
+    """LangGraph node: execute the trade on the configured exchange testnet.
 
     Places a market order with attached stop-loss and take-profit.
-    Deribit perpetual contracts are USD-notional, so amount=100 means $100.
+    Amount units depend on the exchange — see usd_to_contracts().
     """
     decision = state.get("decision", {})
     symbol = state.get("symbol", Config.SYMBOL)
@@ -125,59 +162,63 @@ def execute_trade_node(state: dict) -> dict:
     stop_loss = float(decision["stop_loss"])
     take_profit = float(decision["take_profit"])
 
-    deribit_symbol = to_deribit_symbol(symbol)
+    exchange_name = Config.EXCHANGE.lower()
+    exchange_symbol = to_exchange_symbol(symbol)
     side = "buy" if direction == "LONG" else "sell"
     close_side = "sell" if direction == "LONG" else "buy"
 
-    # Deribit perpetual contracts are denominated in USD notional
-    amount = decision.get("position_size_usd", 100)
+    position_size_usd = float(decision.get("position_size_usd", 100))
+    amount = usd_to_contracts(position_size_usd, entry_price, exchange_name)
 
-    logger.info(f"Executing {direction} on {deribit_symbol} @ ~{entry_price} | Size: ${amount}")
+    logger.info(
+        f"Executing {direction} on {exchange_symbol} ({exchange_name}) "
+        f"@ ~{entry_price} | Size: {amount} contracts (${position_size_usd})"
+    )
+
+    # dYdX uses triggerPrice; Deribit uses stopPrice
+    sl_params = (
+        {"triggerPrice": float(stop_loss), "reduceOnly": True}
+        if exchange_name == "dydx"
+        else {"stopPrice": float(stop_loss), "reduceOnly": True}
+    )
+    tp_params = (
+        {"triggerPrice": float(take_profit), "reduceOnly": True}
+        if exchange_name == "dydx"
+        else {"stopPrice": float(take_profit), "reduceOnly": True}
+    )
 
     try:
-        exchange = get_testnet_client()
+        exchange = get_exchange_client()
 
         # Place market entry order
         if side == "buy":
-            order = exchange.create_market_buy_order(deribit_symbol, amount)
+            order = exchange.create_market_buy_order(exchange_symbol, amount)
         else:
-            order = exchange.create_market_sell_order(deribit_symbol, amount)
+            order = exchange.create_market_sell_order(exchange_symbol, amount)
 
         order_id = order.get("id", "unknown")
         logger.info(f"Market order placed: {order_id}")
 
         # Place stop-loss
         try:
-            sl_order = exchange.create_order(
-                deribit_symbol,
-                "stop_market",
-                close_side,
-                amount,
-                None,
-                {"stopPrice": float(stop_loss), "reduceOnly": True},
+            exchange.create_order(
+                exchange_symbol, "stop_market", close_side, amount, None, sl_params
             )
             logger.info(f"Stop-loss set at {stop_loss}")
         except Exception as e:
             logger.warning(f"Failed to set stop-loss: {e}")
-            sl_order = {"status": "failed", "error": str(e)}
 
         # Place take-profit
         try:
-            tp_order = exchange.create_order(
-                deribit_symbol,
-                "take_profit_market",
-                close_side,
-                amount,
-                None,
-                {"stopPrice": float(take_profit), "reduceOnly": True},
+            exchange.create_order(
+                exchange_symbol, "take_profit_market", close_side, amount, None, tp_params
             )
             logger.info(f"Take-profit set at {take_profit}")
         except Exception as e:
             logger.warning(f"Failed to set take-profit: {e}")
-            tp_order = {"status": "failed", "error": str(e)}
 
         schedule_forced_exit(
-            symbol=deribit_symbol,
+            symbol=exchange_symbol,
             timeframe=state.get("timeframe", "1h"),
             forecast_candles=Config.FORECAST_CANDLES,
             exchange=exchange,
@@ -188,6 +229,7 @@ def execute_trade_node(state: dict) -> dict:
             "order_id": order_id,
             "direction": direction,
             "symbol": symbol,
+            "exchange": exchange_name,
             "quantity": amount,
             "entry_price": entry_price,
             "stop_loss": stop_loss,
@@ -203,6 +245,7 @@ def execute_trade_node(state: dict) -> dict:
             "error": str(e),
             "direction": direction,
             "symbol": symbol,
+            "exchange": exchange_name,
             "entry_price": entry_price,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -229,7 +272,7 @@ def log_trade(trade_result: dict, decision: dict) -> None:
     with open(log_dir / filename, "w") as f:
         json.dump(log_entry, f, indent=2, default=str)
 
-    # Also append to a running CSV-like log
+    # Also append to a running summary log
     summary_file = log_dir / "trade_summary.jsonl"
     with open(summary_file, "a") as f:
         f.write(json.dumps(log_entry, default=str) + "\n")

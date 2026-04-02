@@ -235,23 +235,31 @@ class DydxAdapter(ExchangeAdapter):
         url = f"{base}/v4/addresses/{Secrets.DYDX_ADDRESS}/subaccountNumber/0"
         # BTC-USDC → BTC-USD (dYdX indexer format)
         market_id = symbol.replace("-USDC", "-USD")
+        logger.info(f"dYdX checking position for {symbol} → market_id={market_id}")
         try:
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             sub = data.get("subaccount") or data.get("subaccounts", [data])[0]
             positions = sub.get("openPerpetualPositions", {})
+            logger.info(f"dYdX open positions found: {list(positions.keys())}")
             pos = positions.get(market_id)
-            if pos and pos.get("status") == "OPEN" and float(pos.get("size", "0")) != 0:
+            result = bool(pos and pos.get("status") == "OPEN" and float(pos.get("size", "0")) != 0)
+            if result:
                 logger.info(
                     f"dYdX open position on {market_id}: "
                     f"{pos.get('side')} {pos.get('size')}"
                 )
-                return True
-            return False
+            logger.info(f"dYdX has_open_position({symbol}): {result}")
+            return result
         except Exception as e:
-            logger.warning(f"Failed to check dYdX position for {symbol}: {e}")
-            return False
+            # Conservative fallback: if we cannot verify, assume open to prevent
+            # duplicate orders from being placed when the API is temporarily down.
+            logger.warning(
+                f"dYdX position check failed for {symbol}: {e} — "
+                f"assuming open (conservative)"
+            )
+            return True
 
     def get_open_positions(self) -> list[Position]:
         """Fetch all open perpetual positions via indexer API."""
@@ -271,8 +279,15 @@ class DydxAdapter(ExchangeAdapter):
             result = []
             for market_id, pos in raw_positions.items():
                 if pos.get("status") == "OPEN" and float(pos.get("size", "0")) != 0:
+                    # Convert dYdX market_id ("BTC-USD") to CCXT format ("BTC/USDC:USDC")
+                    # so trade_outcome_tracker can match against to_exchange_symbol() output.
+                    internal = market_id.replace("-USD", "-USDC")
+                    try:
+                        ccxt_sym = self.to_exchange_symbol(internal)
+                    except Exception:
+                        ccxt_sym = market_id  # fallback: keep dYdX format if unmapped
                     result.append(Position(
-                        symbol=market_id,
+                        symbol=ccxt_sym,
                         side=pos.get("side", "LONG").lower(),
                         size=abs(float(pos.get("size", "0"))),
                         entry_price=float(pos.get("entryPrice", 0)),

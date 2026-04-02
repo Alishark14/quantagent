@@ -457,28 +457,52 @@ def config():
 
 @app.get("/api/settings/exchanges")
 async def get_exchange_status():
-    """Check connectivity and balance for all configured exchanges."""
-    from exchanges import get_adapter
-    from config import Config
+    """Check connectivity and balance for all configured exchanges (testnet + mainnet)."""
+    import config as cfg
+    from config import Secrets
+    from exchanges import get_adapter, clear_cache
+
+    # Build list of (exchange, is_testnet, display_name) based on configured credentials
+    configs: list[tuple[str, bool, str]] = []
+    if Secrets.HYPERLIQUID_WALLET_ADDRESS or Secrets.HYPERLIQUID_TESTNET_WALLET_ADDRESS:
+        if Secrets.HYPERLIQUID_TESTNET_WALLET_ADDRESS or Secrets.HYPERLIQUID_WALLET_ADDRESS:
+            configs.append(("hyperliquid", True, "Hyperliquid (Testnet)"))
+        if Secrets.HYPERLIQUID_WALLET_ADDRESS:
+            configs.append(("hyperliquid", False, "Hyperliquid (Mainnet)"))
+    if Secrets.DYDX_ADDRESS:
+        configs.append(("dydx", True, "dYdX v4 (Testnet)"))
+        configs.append(("dydx", False, "dYdX v4 (Mainnet)"))
+    if Secrets.DERIBIT_TESTNET_API_KEY:
+        configs.append(("deribit", True, "Deribit (Testnet)"))
+
+    original_testnet = cfg.Config.EXCHANGE_TESTNET
     results = []
-    for name in ["dydx", "hyperliquid", "deribit"]:
+    for exchange_name, is_testnet, display_name in configs:
         try:
-            adapter = get_adapter(name)
+            cfg.Config.EXCHANGE_TESTNET = is_testnet
+            clear_cache()
+            adapter = get_adapter(exchange_name)
             balance = await asyncio.to_thread(adapter.get_balance)
             results.append({
-                "name": name,
+                "name": display_name,
+                "exchange": exchange_name,
                 "status": "connected",
-                "testnet": Config.EXCHANGE_TESTNET,
+                "testnet": is_testnet,
                 "balance": balance,
             })
         except Exception as e:
             results.append({
-                "name": name,
+                "name": display_name,
+                "exchange": exchange_name,
                 "status": "error",
-                "error": str(e),
+                "testnet": is_testnet,
+                "error": str(e)[:100],
                 "balance": None,
-                "testnet": None,
             })
+        finally:
+            cfg.Config.EXCHANGE_TESTNET = original_testnet
+            clear_cache()
+
     return results
 
 
@@ -499,7 +523,12 @@ async def bot_log_stream(websocket: WebSocket, bot_id: str):
     mode = bot["trading_mode"]
     log_path = PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log"
 
+    logger.info(f"WS log stream: bot={bot_id} symbol={symbol} mode={mode} path={log_path} exists={log_path.exists()}")
+
     try:
+        if not log_path.exists():
+            await websocket.send_json({"type": "status", "data": f"Log file not found: {log_path}. Start the bot to generate logs."})
+
         # Send existing log content first (last 200 lines)
         if log_path.exists():
             with open(log_path, "r", errors="replace") as f:

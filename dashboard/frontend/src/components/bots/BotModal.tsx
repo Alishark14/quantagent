@@ -426,7 +426,10 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                     />
                     <button
                       type="button"
-                      onClick={() => { setCustomSymbol(false); set('symbol', 'BTC-USDC') }}
+                      onClick={() => {
+                        setCustomSymbol(false)
+                        if (!KNOWN_SYMBOLS.includes(form.symbol)) set('symbol', 'BTC-USDC')
+                      }}
                       className="text-xs text-text-muted hover:text-text-primary px-2"
                     >
                       ↩

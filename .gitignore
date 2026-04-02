@@ -1,3 +1,7 @@
+#project secret sauce
+PROJECT_CONTEXT.md
+CLAUDE.md
+
 # Environment
 .env
 .env.local

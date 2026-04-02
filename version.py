@@ -1,7 +1,7 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.0"
-__version_date__ = "2026.04.02"
+__version__ = "0.5.1"
+__version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
 
@@ -151,6 +151,22 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.1",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Bug Fix Pass",
+        "changes": [
+            "Fix: dYdX get_open_positions() stored symbol in dYdX format (BTC-USD) not CCXT format — reconciler comparison always failed",
+            "Fix: trade_analyzer enrich_trade() now returns exit_type=open for trades without confirmed exit_price/exit_time",
+            "Fix: WebSocket bot_log_stream adds debug logging + client status message when log file missing",
+            "Fix: get_exchange_status() now shows both testnet and mainnet for each configured exchange",
+            "Fix: data.py fetch_ohlc() raises clear ValueError on empty OHLCV (was silent IndexError)",
+            "Fix: BotModal ↩ button no longer resets symbol to BTC-USDC if current custom value is a known symbol",
+            "Fix: Hyperliquid SL/TP placement logs raw order type/trigger for diagnosing plain-limit regression",
+            "Fix: dYdX has_open_position() conservative fallback — returns True on API exception (prevents duplicate orders)",
         ],
     },
 ]

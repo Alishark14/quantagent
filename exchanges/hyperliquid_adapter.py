@@ -251,7 +251,11 @@ class HyperliquidAdapter(ExchangeAdapter):
                     **extra,
                 },
             )
-            logger.info(f"Hyperliquid SL placed: {order.get('id')}")
+            order_type = order.get("type") or order.get("info", {}).get("orderType", "unknown")
+            logger.info(
+                f"Hyperliquid SL placed: id={order.get('id')} type={order_type} "
+                f"trigger={order.get('triggerPrice') or order.get('info', {}).get('triggerPx')}"
+            )
             return OrderResult(
                 order_id=order.get("id", "unknown"),
                 symbol=symbol,
@@ -291,7 +295,11 @@ class HyperliquidAdapter(ExchangeAdapter):
                     **extra,
                 },
             )
-            logger.info(f"Hyperliquid TP placed: {order.get('id')}")
+            order_type = order.get("type") or order.get("info", {}).get("orderType", "unknown")
+            logger.info(
+                f"Hyperliquid TP placed: id={order.get('id')} type={order_type} "
+                f"trigger={order.get('triggerPrice') or order.get('info', {}).get('triggerPx')}"
+            )
             return OrderResult(
                 order_id=order.get("id", "unknown"),
                 symbol=symbol,

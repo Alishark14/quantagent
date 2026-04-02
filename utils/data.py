@@ -127,6 +127,12 @@ def fetch_ohlc(
         for row in raw
     ]
 
+    if not candles:
+        raise ValueError(
+            f"No OHLCV data returned for {symbol} ({fetch_symbol}) via {source}. "
+            f"Symbol may be unavailable on this network/exchange."
+        )
+
     logger.info(f"Fetched {len(candles)} candles. Latest close: {candles[-1]['close']}")
     return candles
 

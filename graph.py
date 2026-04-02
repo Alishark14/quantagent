@@ -15,6 +15,9 @@ from agents.pattern import pattern_agent_node
 from agents.trend import trend_agent_node
 from agents.risk_decision import risk_decision_agent_node
 from execution import execute_trade_node, log_trade
+from utils.event_emitter import (
+    emit_cycle_start, emit_agent_result, emit_decision, emit_trade_execution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,5 +134,46 @@ def run_analysis(
         },
     )
     logger.info(f"=== Cycle complete: {result.get('decision', {}).get('decision', 'N/A')} ===")
+
+    # Emit structured events to dashboard (non-blocking, non-fatal)
+    try:
+        emit_cycle_start(symbol, timeframe)
+
+        for agent_name, emoji, signal_key, report_key, usage_key in [
+            ("IndicatorAgent", "📈", "indicator_signal", "indicator_report", "indicator_usage"),
+            ("PatternAgent", "👁️", "pattern_signal", "pattern_report", "pattern_usage"),
+            ("TrendAgent", "📊", "trend_signal", "trend_report", "trend_usage"),
+        ]:
+            if result.get(report_key):
+                emit_agent_result(
+                    agent_name=agent_name,
+                    emoji=emoji,
+                    signal=result.get(signal_key, "neutral"),
+                    report=result.get(report_key, ""),
+                    usage=result.get(usage_key, {}),
+                )
+
+        decision = result.get("decision", {})
+        if decision.get("decision"):
+            emit_decision(
+                direction=decision.get("decision", ""),
+                entry=decision.get("entry_price", 0),
+                sl=decision.get("stop_loss", 0),
+                tp=decision.get("take_profit", 0),
+                rr=decision.get("risk_reward_ratio", 0),
+                reasoning=decision.get("justification", ""),
+                agreement=result.get("sizing_details", {}).get("agreement_score", 0),
+                position_size=result.get("position_size", 0),
+            )
+
+        trade_result = result.get("trade_result", {})
+        if trade_result:
+            emit_trade_execution(
+                status=trade_result.get("status", "unknown"),
+                order_id=trade_result.get("order_id"),
+                error=trade_result.get("reason"),
+            )
+    except Exception:
+        pass  # Never affect the trading pipeline
 
     return result

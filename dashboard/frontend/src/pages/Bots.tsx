@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Plus, Shield, X, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import type { Bot, BotCreate } from '../types'
 import BotCard from '../components/bots/BotCard'
 import BotModal from '../components/bots/BotModal'
+import BotPeekDrawer from '../components/bots/BotPeekDrawer'
 
 interface Props {
   refreshTick: number
@@ -13,6 +14,7 @@ interface Props {
 const AUTO_REFRESH_MS = 10_000
 
 export default function Bots({ refreshTick }: Props) {
+  const navigate = useNavigate()
   const [bots, setBots] = useState<Bot[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -29,6 +31,8 @@ export default function Bots({ refreshTick }: Props) {
   const [closeConfirm, setCloseConfirm] = useState(false)
   const [closing, setClosing] = useState(false)
   const [guardianActive, setGuardianActive] = useState(false)
+
+  const [peekBotId, setPeekBotId] = useState<string | null>(null)
 
   const fetchBots = useCallback(() => {
     Promise.all([
@@ -261,6 +265,7 @@ export default function Bots({ refreshTick }: Props) {
                 onPause={() => withAction(bot.id, () => api.pauseBot(bot.id))}
                 onEdit={() => { setEditBot(bot); setModalOpen(true) }}
                 onDelete={() => handleDelete(bot)}
+                onPeek={() => setPeekBotId(bot.id)}
                 dailyPnl={dailyPnlByBot[bot.id]}
                 apiCost={apiCostByBot[bot.id]}
               />
@@ -277,6 +282,20 @@ export default function Bots({ refreshTick }: Props) {
           onSaved={handleSaved}
         />
       )}
+
+      {/* Peek drawer */}
+      {peekBotId && (() => {
+        const peekBot = bots.find(b => b.id === peekBotId)
+        return (
+          <BotPeekDrawer
+            botId={peekBotId}
+            botName={peekBot?.name}
+            botSymbol={peekBot?.symbol}
+            onClose={() => setPeekBotId(null)}
+            onViewDetails={() => { setPeekBotId(null); navigate(`/bots/${peekBotId}`) }}
+          />
+        )
+      })()}
     </div>
   )
 }

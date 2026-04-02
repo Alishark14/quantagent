@@ -18,9 +18,13 @@ class Secrets:
     DERIBIT_TESTNET_API_KEY: str = os.getenv("DERIBIT_TESTNET_API_KEY", "")
     DERIBIT_TESTNET_SECRET: str = os.getenv("DERIBIT_TESTNET_SECRET", "")
 
-    # Hyperliquid (wallet-based auth)
+    # Hyperliquid mainnet (wallet-based auth)
     HYPERLIQUID_WALLET_ADDRESS: str = os.getenv("HYPERLIQUID_WALLET_ADDRESS", "")
     HYPERLIQUID_PRIVATE_KEY: str = os.getenv("HYPERLIQUID_PRIVATE_KEY", "")
+
+    # Hyperliquid testnet — separate API wallet from https://app.hyperliquid-testnet.xyz
+    HYPERLIQUID_TESTNET_WALLET_ADDRESS: str = os.getenv("HYPERLIQUID_TESTNET_WALLET_ADDRESS", "")
+    HYPERLIQUID_TESTNET_PRIVATE_KEY: str = os.getenv("HYPERLIQUID_TESTNET_PRIVATE_KEY", "")
 
     # LangSmith observability
     LANGSMITH_ENABLED: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"

@@ -485,7 +485,10 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                 <div className="flex flex-col gap-1">
                   <Toggle
                     value={form.trading_mode === 'live'}
-                    onChange={v => set('trading_mode', v ? 'live' : 'paper')}
+                    onChange={v => {
+                      set('trading_mode', v ? 'live' : 'paper')
+                      set('exchange_testnet', v ? 0 : 1)
+                    }}
                     labelOff="Paper — trades on testnet with fake money"
                     labelOn="Live — uses real USDC on mainnet"
                     colorOn="bg-[#f97316]"

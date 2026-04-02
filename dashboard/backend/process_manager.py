@@ -55,7 +55,7 @@ def start_bot(bot_config: dict) -> int:
         "MAX_POSITION_PCT": str(bot_config.get("max_position_pct", 0.5)),
         "MIN_POSITION_USD": str(bot_config.get("min_position_usd", 20)),
         "NUM_SYMBOLS": "1",  # each bot process manages exactly one symbol
-        "LANGCHAIN_PROJECT": f"quantagent-{bot_config['trading_mode']}-{bot_config['symbol'].lower()}",
+        "LANGCHAIN_PROJECT": "quantagent-paper" if (bot_config["trading_mode"] == "paper" or bot_config.get("exchange_testnet", 1)) else "quantagent-live",
     })
 
     # Log which credential keys are being passed (never log values)

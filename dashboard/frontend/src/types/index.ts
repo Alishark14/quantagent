@@ -30,7 +30,7 @@ export interface TradeRecord {
   exit_price: number | null
   pnl: number
   pnl_pct: number
-  exit_type: 'tp' | 'sl' | 'time' | 'unknown'
+  exit_type: 'tp' | 'sl' | 'time' | 'unknown' | 'open'
   exit_reason?: string
   rr_ratio: number
   atr_value: number | null

@@ -1,11 +1,12 @@
 """Position Guardian — monitors exchange positions and cleans up orphans.
 
 Runs every 60 seconds inside the dashboard backend. It:
-1. Fetches all open positions from the exchange adapter
+1. Fetches all open positions from each exchange that has active bots
 2. Checks if each position has a running bot managing it
 3. If orphaned (no bot) for longer than 2× the bot's timeframe, force-closes it
-4. If a position exists but has no stop-loss order, re-places the SL
-5. Cancels stale orders that have no matching position
+4. On non-native-SL exchanges (dYdX): if a position has no stop-loss, places emergency SL
+5. On native-SL exchanges (Hyperliquid): if orphaned but SL/TP orders exist, lets exchange handle it
+6. Cancels stale orders (SL/TP left over after a position has already closed)
 """
 
 import logging
@@ -13,7 +14,7 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Track when we first noticed an orphan (symbol -> first_seen_timestamp)
+# Track when we first noticed an orphan. Key: "{exchange_name}:{ex_symbol}"
 _orphan_tracker: dict[str, datetime] = {}
 
 TIMEFRAME_MINUTES = {
@@ -41,7 +42,7 @@ def has_stop_loss(orders: list) -> bool:
 
 
 def reconcile_positions(all_bots: list[dict]) -> dict:
-    """Main reconciliation logic using the exchange adapter.
+    """Main reconciliation logic — checks all exchanges that have running bots.
 
     Args:
         all_bots: All bot dicts (any status) — used for timeframe context and
@@ -63,140 +64,196 @@ def reconcile_positions(all_bots: list[dict]) -> dict:
         "errors": 0,
     }
 
-    try:
-        adapter = get_adapter()
-    except Exception as e:
-        logger.error(f"GUARDIAN: Failed to get exchange adapter: {e}")
-        return summary
-
-    # Build map: raw_symbol -> bot (only for running bots)
-    managed_symbols: dict[str, dict] = {}
+    # Collect exchanges that have at least one running bot
+    # Value: list of running bots on that exchange
+    active_exchanges: dict[str, list[dict]] = {}
     for bot in all_bots:
         if bot["status"] == "running":
+            ex = bot.get("exchange", "dydx").lower()
+            active_exchanges.setdefault(ex, []).append(bot)
+
+    if not active_exchanges:
+        logger.debug("Guardian: No running bots — skipping reconciliation")
+        return summary
+
+    logger.info(f"Guardian: Checking positions on {list(active_exchanges.keys())}")
+
+    now = datetime.now(timezone.utc)
+
+    for exchange_name, running_bots in active_exchanges.items():
+        try:
+            adapter = get_adapter(exchange_name)
+        except Exception as e:
+            logger.error(f"Guardian: Failed to get adapter for {exchange_name}: {e}")
+            summary["errors"] += 1
+            continue
+
+        # Build map: ex_symbol -> bot (running bots on THIS exchange only)
+        managed_symbols: dict[str, dict] = {}
+        for bot in running_bots:
             try:
                 ex_symbol = adapter.to_exchange_symbol(bot["symbol"])
                 managed_symbols[ex_symbol] = bot
             except Exception:
                 pass
 
-    # Build a broader map for timeframe lookup (all bots, any status)
-    symbol_timeframe: dict[str, str] = {}
-    for bot in all_bots:
-        try:
-            ex_symbol = adapter.to_exchange_symbol(bot["symbol"])
-            symbol_timeframe.setdefault(ex_symbol, bot["timeframe"])
-        except Exception:
-            pass
-
-    positions = adapter.get_open_positions()
-    summary["positions_checked"] = len(positions)
-
-    now = datetime.now(timezone.utc)
-    seen_symbols: set[str] = set()
-
-    for pos in positions:
-        symbol = pos.symbol
-        seen_symbols.add(symbol)
-
-        if symbol in managed_symbols:
-            # Active bot owns this position — check for missing SL
-            raw_exchange = adapter.get_exchange_client()
-            if raw_exchange is not None:
+        # Timeframe lookup for all bots on this exchange (any status, for grace period calc)
+        symbol_timeframe: dict[str, str] = {}
+        for bot in all_bots:
+            if bot.get("exchange", "dydx").lower() == exchange_name:
                 try:
-                    orders = raw_exchange.fetch_open_orders(symbol)
-                    if not has_stop_loss(orders):
-                        logger.warning(
-                            f"GUARDIAN: Position on {symbol} has no stop-loss — "
-                            f"placing emergency SL"
-                        )
-                        if _place_emergency_stop_loss(adapter, pos):
-                            summary["missing_sl_fixed"] += 1
-                        else:
-                            summary["errors"] += 1
-                except Exception as e:
-                    logger.error(f"GUARDIAN: Failed to check orders for {symbol}: {e}")
-            # Clear from orphan tracker if previously flagged
-            _orphan_tracker.pop(symbol, None)
+                    ex_symbol = adapter.to_exchange_symbol(bot["symbol"])
+                    symbol_timeframe.setdefault(ex_symbol, bot["timeframe"])
+                except Exception:
+                    pass
 
-        else:
-            # ORPHANED — no running bot for this symbol
-            summary["orphans_found"] += 1
+        try:
+            positions = adapter.get_open_positions()
+        except Exception as e:
+            logger.error(f"Guardian: Failed to get positions for {exchange_name}: {e}")
+            summary["errors"] += 1
+            continue
 
-            if symbol not in _orphan_tracker:
-                _orphan_tracker[symbol] = now
-                logger.warning(
-                    f"GUARDIAN: Orphaned position detected on {symbol} — "
-                    f"starting grace period"
-                )
-                # Ensure it has a stop-loss even during the grace period
-                raw_exchange = adapter.get_exchange_client()
-                if raw_exchange is not None:
-                    try:
-                        orders = raw_exchange.fetch_open_orders(symbol)
-                        if not has_stop_loss(orders):
-                            if _place_emergency_stop_loss(adapter, pos):
-                                summary["missing_sl_fixed"] += 1
-                    except Exception:
-                        pass
+        summary["positions_checked"] += len(positions)
+
+        # Track which keys we saw this cycle (for cleanup at the end)
+        seen_tracker_keys: set[str] = set()
+
+        for pos in positions:
+            symbol = pos.symbol
+            tracker_key = f"{exchange_name}:{symbol}"
+            seen_tracker_keys.add(tracker_key)
+
+            if symbol in managed_symbols:
+                # ── Active bot owns this position ─────────────────────────────
+                # Only check for missing SL on exchanges without native SL/TP.
+                # On Hyperliquid, the exchange already holds the SL order natively.
+                if not adapter.supports_native_sl_tp():
+                    raw_exchange = adapter.get_exchange_client()
+                    if raw_exchange is not None:
+                        try:
+                            orders = raw_exchange.fetch_open_orders(symbol)
+                            if not has_stop_loss(orders):
+                                logger.warning(
+                                    f"Guardian: Position on {symbol} ({exchange_name}) has no "
+                                    f"stop-loss — placing emergency SL"
+                                )
+                                if _place_emergency_stop_loss(adapter, pos):
+                                    summary["missing_sl_fixed"] += 1
+                                else:
+                                    summary["errors"] += 1
+                        except Exception as e:
+                            logger.error(
+                                f"Guardian: Failed to check orders for {symbol}: {e}"
+                            )
+                # Clear from orphan tracker if previously flagged
+                _orphan_tracker.pop(tracker_key, None)
 
             else:
-                first_seen = _orphan_tracker[symbol]
-                timeframe = symbol_timeframe.get(symbol, "1h")
-                grace_seconds = get_grace_period_seconds(timeframe)
-                elapsed = (now - first_seen).total_seconds()
+                # ── ORPHANED — no running bot for this symbol on this exchange ──
+                summary["orphans_found"] += 1
 
-                if elapsed >= grace_seconds:
+                if tracker_key not in _orphan_tracker:
+                    _orphan_tracker[tracker_key] = now
                     logger.warning(
-                        f"GUARDIAN: Orphan on {symbol} exceeded grace period "
-                        f"({elapsed:.0f}s > {grace_seconds}s) — force closing"
+                        f"Guardian: Orphaned position detected on {symbol} ({exchange_name}) — "
+                        f"starting grace period"
                     )
-                    try:
-                        adapter.close_position(symbol, pos.side, pos.size)
-                        adapter.cancel_all_orders(symbol)
-                        _orphan_tracker.pop(symbol, None)
-                        summary["orphans_closed"] += 1
-                        logger.warning(
-                            f"GUARDIAN: Force-closed {pos.side} position on "
-                            f"{symbol} ({pos.size} contracts)"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"GUARDIAN: Failed to close position on {symbol}: {e}"
-                        )
-                        summary["errors"] += 1
+                    # During grace period: ensure SL exists (non-native-SL exchanges only)
+                    if not adapter.supports_native_sl_tp():
+                        raw_exchange = adapter.get_exchange_client()
+                        if raw_exchange is not None:
+                            try:
+                                orders = raw_exchange.fetch_open_orders(symbol)
+                                if not has_stop_loss(orders):
+                                    if _place_emergency_stop_loss(adapter, pos):
+                                        summary["missing_sl_fixed"] += 1
+                            except Exception:
+                                pass
+
                 else:
-                    remaining = grace_seconds - elapsed
+                    first_seen = _orphan_tracker[tracker_key]
+                    timeframe = symbol_timeframe.get(symbol, "1h")
+                    grace_seconds = get_grace_period_seconds(timeframe)
+                    elapsed = (now - first_seen).total_seconds()
+
+                    if elapsed >= grace_seconds:
+                        logger.warning(
+                            f"Guardian: Orphan on {symbol} ({exchange_name}) exceeded grace period "
+                            f"({elapsed:.0f}s > {grace_seconds}s) — checking before force close"
+                        )
+
+                        # On native-SL exchanges (Hyperliquid): if SL/TP orders still exist,
+                        # the exchange will handle the exit — don't force-close.
+                        if adapter.supports_native_sl_tp():
+                            try:
+                                raw_exchange = adapter.get_exchange_client()
+                                open_orders = raw_exchange.fetch_open_orders(symbol)
+                                if open_orders:
+                                    logger.info(
+                                        f"Guardian: {symbol} has {len(open_orders)} open SL/TP "
+                                        f"orders on {adapter.name}. Exchange will handle exit. "
+                                        f"Skipping force-close."
+                                    )
+                                    continue
+                            except Exception:
+                                pass  # Can't verify — fall through to force-close
+
+                        try:
+                            adapter.close_position(symbol, pos.side, pos.size)
+                            adapter.cancel_all_orders(symbol)
+                            _orphan_tracker.pop(tracker_key, None)
+                            summary["orphans_closed"] += 1
+                            logger.warning(
+                                f"Guardian: Force-closed {pos.side} position on "
+                                f"{symbol} ({exchange_name}, {pos.size} contracts)"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Guardian: Failed to close position on "
+                                f"{symbol} ({exchange_name}): {e}"
+                            )
+                            summary["errors"] += 1
+                    else:
+                        remaining = grace_seconds - elapsed
+                        logger.info(
+                            f"Guardian: Orphan on {symbol} ({exchange_name}) in grace period "
+                            f"({remaining:.0f}s remaining)"
+                        )
+
+        # Clean tracker entries for this exchange whose positions no longer exist
+        stale_keys = [
+            k for k in list(_orphan_tracker)
+            if k.startswith(f"{exchange_name}:") and k not in seen_tracker_keys
+        ]
+        for k in stale_keys:
+            _orphan_tracker.pop(k)
+
+        # Cancel stale orders (SL/TP left over after position already closed)
+        raw_exchange = adapter.get_exchange_client()
+        if raw_exchange is not None:
+            try:
+                all_open_orders = raw_exchange.fetch_open_orders()
+                position_symbols = {p.symbol for p in positions}
+                for order in all_open_orders:
+                    if order.get("symbol") not in position_symbols:
+                        try:
+                            raw_exchange.cancel_order(order["id"], order["symbol"])
+                            summary["stale_orders_cancelled"] += 1
+                        except Exception:
+                            pass
+                if summary["stale_orders_cancelled"]:
                     logger.info(
-                        f"GUARDIAN: Orphan on {symbol} in grace period "
-                        f"({remaining:.0f}s remaining)"
+                        f"Guardian: Cancelled {summary['stale_orders_cancelled']} "
+                        f"stale orders on {exchange_name}"
                     )
+            except Exception:
+                pass  # Not all exchanges support fetch_open_orders() without a symbol
 
-    # Clean tracker entries for positions that no longer exist
-    for s in [k for k in _orphan_tracker if k not in seen_symbols]:
-        _orphan_tracker.pop(s)
-
-    # Cancel stale orders (SL/TP left over after a position has already closed)
-    raw_exchange = adapter.get_exchange_client()
-    if raw_exchange is not None:
-        try:
-            all_open_orders = raw_exchange.fetch_open_orders()
-            position_symbols = {p.symbol for p in positions}
-            for order in all_open_orders:
-                if order.get("symbol") not in position_symbols:
-                    try:
-                        raw_exchange.cancel_order(order["id"], order["symbol"])
-                        summary["stale_orders_cancelled"] += 1
-                    except Exception:
-                        pass
-            if summary["stale_orders_cancelled"]:
-                logger.info(
-                    f"GUARDIAN: Cancelled {summary['stale_orders_cancelled']} stale orders"
-                )
-        except Exception:
-            pass  # Not all exchanges support fetch_open_orders() without a symbol
-
-    if any(v > 0 for k, v in summary.items() if k != "positions_checked"):
-        logger.info(f"GUARDIAN: Reconciliation summary: {summary}")
+    logger.info(
+        f"Guardian: Found {summary['positions_checked']} open positions, "
+        f"{summary['orphans_found']} orphaned, {summary['orphans_closed']} force-closed"
+    )
 
     return summary
 
@@ -214,7 +271,7 @@ def _place_emergency_stop_loss(adapter, pos) -> bool:
 
     if not entry_price:
         logger.error(
-            f"GUARDIAN: Cannot place emergency SL for {symbol} — no price info"
+            f"Guardian: Cannot place emergency SL for {symbol} — no price info"
         )
         return False
 
@@ -231,13 +288,13 @@ def _place_emergency_stop_loss(adapter, pos) -> bool:
     result = adapter.place_stop_loss(symbol, close_side, size, sl_price)
     if result is not None:
         logger.warning(
-            f"GUARDIAN: Placed emergency SL for {side} {symbol} at {sl_price:.2f} "
+            f"Guardian: Placed emergency SL for {side} {symbol} at {sl_price:.2f} "
             f"(entry was {entry_price})"
         )
         return True
     else:
         logger.error(
-            f"GUARDIAN: Failed to place emergency SL for {symbol} "
+            f"Guardian: Failed to place emergency SL for {symbol} "
             f"(adapter returned None — exchange may not support native SL)"
         )
         return False

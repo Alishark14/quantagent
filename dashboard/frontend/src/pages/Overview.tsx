@@ -25,7 +25,7 @@ export default function Overview({ refreshTick }: Props) {
     Promise.all([
       api.overview(botId, mode),
       api.trades({ limit: 10, offset: 0, botId, mode }),
-      api.apiCosts(botId).catch(() => null),
+      api.apiCosts(botId, undefined, mode).catch(() => null),
     ])
       .then(([ov, tr, costs]) => {
         setOverview(ov)

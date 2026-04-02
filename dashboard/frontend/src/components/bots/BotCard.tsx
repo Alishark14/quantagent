@@ -1,5 +1,6 @@
 import {
   Edit2,
+  Eye,
   PauseCircle,
   Play,
   Square,
@@ -14,6 +15,7 @@ interface Props {
   onPause: () => void
   onEdit: () => void
   onDelete: () => void
+  onPeek: () => void
   actionLoading?: boolean
   dailyPnl?: number
   apiCost?: number
@@ -82,6 +84,7 @@ export default function BotCard({
   onPause,
   onEdit,
   onDelete,
+  onPeek,
   actionLoading = false,
   dailyPnl,
   apiCost,
@@ -218,6 +221,13 @@ export default function BotCard({
           </button>
         )}
         <div className="flex-1" />
+        <button
+          onClick={(e) => { e.stopPropagation(); onPeek() }}
+          className="p-1.5 rounded text-text-muted hover:text-[#06b6d4] hover:bg-[#06b6d4]/10 transition-colors"
+          title="Quick peek — live reasoning"
+        >
+          <Eye size={13} />
+        </button>
         <button
           onClick={onEdit}
           className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"

@@ -63,6 +63,9 @@ function PnlCell({ value }: { value: number }) {
 }
 
 function ExitBadge({ type, reason }: { type: string; reason?: string }) {
+  if (type === 'open') {
+    return <span className="text-text-muted text-xs">—</span>
+  }
   const map: Record<string, string> = {
     tp: 'bg-profit/15 text-profit',
     sl: 'bg-loss/15 text-loss',

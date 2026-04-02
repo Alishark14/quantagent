@@ -169,7 +169,7 @@ def execute_trade_node(state: dict) -> dict:
                         "indicator_signal": state.get("indicator_signal", ""),
                         "pattern_signal": state.get("pattern_signal", ""),
                         "trend_signal": state.get("trend_signal", ""),
-                        "agreement_score": state.get("sizing_details", {}).get("agreement_score"),
+                        "agreement_score": state.get("sizing_details", {}).get("agreement", {}).get("agreeing_count"),
                         "decision_reasoning": decision.get("justification", ""),
                         "exchange": exchange_name,
                         "trading_mode": Config.TRADING_MODE,

@@ -242,7 +242,7 @@ def create_bot(config: dict) -> dict:
         "forecast_candles": config.get("forecast_candles", 3),
         "agents_enabled": config.get("agents_enabled", "indicator,pattern,trend"),
         "llm_model": config.get("llm_model", "claude-sonnet-4-20250514"),
-        "exchange": config.get("exchange", "deribit"),
+        "exchange": config.get("exchange", "dydx"),
         "exchange_testnet": config.get("exchange_testnet", 1),
         "status": "stopped",
         "pid": None,
@@ -542,7 +542,7 @@ def create_cycle_cost(data: dict) -> None:
         )
 
 
-def get_api_cost_stats(bot_id: str = None, days: int = None) -> dict:
+def get_api_cost_stats(bot_id: str = None, days: int = None, mode: str = None) -> dict:
     """Return API cost statistics aggregated from cycle_costs table."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -556,6 +556,9 @@ def get_api_cost_stats(bot_id: str = None, days: int = None) -> dict:
         if days:
             where_parts.append("date(created_at) >= date('now', ?)")
             params.append(f"-{days} days")
+        if mode and mode != "all":
+            where_parts.append("trading_mode = ?")
+            params.append(mode)
 
         where = " AND ".join(where_parts)
 

@@ -81,9 +81,16 @@ class HyperliquidAdapter(ExchangeAdapter):
         from config import Config, Secrets
         self._testnet = Config.EXCHANGE_TESTNET
 
+        if self._testnet:
+            wallet = Secrets.HYPERLIQUID_TESTNET_WALLET_ADDRESS or Secrets.HYPERLIQUID_WALLET_ADDRESS
+            private_key = Secrets.HYPERLIQUID_TESTNET_PRIVATE_KEY or Secrets.HYPERLIQUID_PRIVATE_KEY
+        else:
+            wallet = Secrets.HYPERLIQUID_WALLET_ADDRESS
+            private_key = Secrets.HYPERLIQUID_PRIVATE_KEY
+
         config = {
-            "walletAddress": Secrets.HYPERLIQUID_WALLET_ADDRESS,
-            "privateKey": Secrets.HYPERLIQUID_PRIVATE_KEY,
+            "walletAddress": wallet,
+            "privateKey": private_key,
             "enableRateLimit": True,
             "options": {
                 "defaultType": "swap",

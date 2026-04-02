@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import sys
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -161,6 +162,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Active WebSocket connections per bot for structured event streaming
+bot_event_connections: dict[str, list[WebSocket]] = defaultdict(list)
+# Cache last 20 events per bot so the peek drawer isn't empty on open
+bot_event_cache: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
+
 
 # ── Health ────────────────────────────────────────────────────────────────────
 
@@ -237,7 +243,8 @@ _EXIT_REASON_TO_TYPE = {
 def _sqlite_trade_to_record(t: dict) -> TradeRecord:
     """Convert a SQLite trade row to a TradeRecord."""
     exit_reason = t.get("exit_reason") or ""
-    exit_type = _EXIT_REASON_TO_TYPE.get(exit_reason, "unknown")
+    status = t.get("status", "open")
+    exit_type = "open" if status == "open" else _EXIT_REASON_TO_TYPE.get(exit_reason, "unknown")
     entry_price = float(t.get("entry_fill_price") or t.get("entry_price") or 0)
     exit_price = float(t["exit_price"]) if t.get("exit_price") is not None else None
     realized_pnl = float(t["realized_pnl"]) if t.get("realized_pnl") is not None else 0.0
@@ -266,7 +273,7 @@ def _sqlite_trade_to_record(t: dict) -> TradeRecord:
         order_id=t.get("entry_order_id") or "",
         status=t.get("status", "open"),
         estimated=False,
-        agreement_level=f"{round(float(t['agreement_score']))/1:.0f}/3" if t.get("agreement_score") else "0/3",
+        agreement_level=f"{float(t['agreement_score']):.1f}/3" if t.get("agreement_score") is not None else "0/3",
         bot_name=t.get("bot_name") or "unknown",
         bot_id=t.get("bot_id") or "",
         position_size_usd=float(t.get("position_size_usd") or 0),
@@ -392,9 +399,9 @@ def breakdown(
     enriched = _filter_enriched_by_mode(enriched, mode)
     rows = compute_breakdown(enriched, dimension)
 
-    # For bot dimension, enrich with API cost data
+    # For bot dimension, enrich with API cost data (mode-filtered to match P&L filter)
     if dimension == "bot":
-        cost_data = get_api_cost_stats(bot_id=bot_id or None)
+        cost_data = get_api_cost_stats(bot_id=bot_id or None, mode=mode if mode != "all" else None)
         cost_by_name = {v["name"]: v["cost"] for v in cost_data.get("by_bot", {}).values()}
         for row in rows:
             api_cost = cost_by_name.get(row["group"], 0.0)
@@ -529,6 +536,67 @@ async def bot_log_stream(websocket: WebSocket, bot_id: str):
             await websocket.send_json({"type": "error", "data": str(e)})
         except Exception:
             pass
+
+
+# ── WebSocket: Structured agent event streaming ───────────────────────────────
+
+@app.post("/api/internal/bot-event/{bot_id}")
+async def receive_bot_event(bot_id: str, event: dict):
+    """Receive structured event from bot worker, relay to WebSocket clients."""
+    event["bot_id"] = bot_id
+
+    # Cache the event
+    bot_event_cache[bot_id].append(event)
+
+    dead_connections = []
+    for ws in bot_event_connections.get(bot_id, []):
+        try:
+            await ws.send_json(event)
+        except Exception:
+            dead_connections.append(ws)
+
+    for ws in dead_connections:
+        if ws in bot_event_connections[bot_id]:
+            bot_event_connections[bot_id].remove(ws)
+
+    return {"status": "ok", "relayed_to": len(bot_event_connections.get(bot_id, []))}
+
+
+@app.get("/api/bots/{bot_id}/events")
+async def get_bot_events(bot_id: str):
+    """Return cached recent events for a bot (fallback for peek drawer)."""
+    return list(bot_event_cache.get(bot_id, []))
+
+
+@app.websocket("/ws/bots/{bot_id}/events")
+async def bot_event_stream(websocket: WebSocket, bot_id: str):
+    """WebSocket endpoint for structured agent events (peek drawer)."""
+    await websocket.accept()
+    bot_event_connections[bot_id].append(websocket)
+
+    # Replay cached events immediately so the drawer isn't empty on open
+    for event in list(bot_event_cache.get(bot_id, [])):
+        try:
+            await websocket.send_json(event)
+        except Exception:
+            break
+
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"type": "keepalive"})
+                except Exception:
+                    break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if websocket in bot_event_connections[bot_id]:
+            bot_event_connections[bot_id].remove(websocket)
 
 
 # ── Bot CRUD ──────────────────────────────────────────────────────────────────
@@ -742,9 +810,9 @@ async def record_trade_close(data: dict):
 # ── Stats endpoints ───────────────────────────────────────────────────────────
 
 @app.get("/api/stats/api-costs")
-def api_costs_stats(bot_id: str = Query(""), days: int = Query(None)):
+def api_costs_stats(bot_id: str = Query(""), days: int = Query(None), mode: str = Query("all")):
     """Return API cost statistics aggregated from all recorded trading cycles."""
-    return get_api_cost_stats(bot_id=bot_id or None, days=days)
+    return get_api_cost_stats(bot_id=bot_id or None, days=days, mode=mode if mode != "all" else None)
 
 
 @app.get("/api/debug/trades")
@@ -794,21 +862,31 @@ def api_guardian_status():
 
 @app.post("/api/emergency/close-all-positions")
 def api_emergency_close_all():
-    """Nuclear option — market-close every open position and cancel every open order."""
+    """Nuclear option — market-close every open position on all exchanges."""
     from exchanges import get_adapter
 
-    adapter = get_adapter()
-    positions = adapter.get_open_positions()
+    all_bots = get_all_bots()
+    # Collect distinct exchanges across ALL bots (any status — orphans may exist)
+    exchange_names = {bot.get("exchange", "dydx").lower() for bot in all_bots}
 
     results: dict[str, int] = {"closed": 0, "failed": 0, "orders_cancelled": 0}
 
-    for pos in positions:
+    for exchange_name in exchange_names:
         try:
-            adapter.close_position(pos.symbol, pos.side, pos.size)
-            results["closed"] += 1
-            results["orders_cancelled"] += adapter.cancel_all_orders(pos.symbol)
-        except Exception:
+            adapter = get_adapter(exchange_name)
+            positions = adapter.get_open_positions()
+        except Exception as e:
+            logger.error(f"EMERGENCY CLOSE ALL: Failed to get positions for {exchange_name}: {e}")
             results["failed"] += 1
+            continue
+
+        for pos in positions:
+            try:
+                adapter.close_position(pos.symbol, pos.side, pos.size)
+                results["closed"] += 1
+                results["orders_cancelled"] += adapter.cancel_all_orders(pos.symbol)
+            except Exception:
+                results["failed"] += 1
 
     logger.warning(f"EMERGENCY CLOSE ALL: {results}")
     return results

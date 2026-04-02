@@ -117,10 +117,11 @@ export const api = {
 
   exchangeStatus: () => get<ExchangeStatus[]>('/api/settings/exchanges'),
 
-  apiCosts: (botId?: string, days?: number) => {
+  apiCosts: (botId?: string, days?: number, mode?: string) => {
     const q = new URLSearchParams()
     if (botId) q.set('bot_id', botId)
     if (days !== undefined) q.set('days', String(days))
+    if (mode && mode !== 'all') q.set('mode', mode)
     const qs = q.toString()
     return get<ApiCostData>(`/api/stats/api-costs${qs ? `?${qs}` : ''}`)
   },

@@ -37,6 +37,12 @@ export interface TradeRecord {
   status: string
   estimated: boolean
   agreement_level: string
+  bot_name: string
+  bot_id: string
+  position_size_usd?: number
+  quantity?: number
+  trading_mode?: string
+  exchange?: string
 }
 
 export interface TradesResponse {
@@ -133,6 +139,14 @@ export interface Bot {
   daily_loss_usd: number
   created_at: string
   updated_at: string
+}
+
+export interface ExchangeStatus {
+  name: string
+  status: 'connected' | 'error'
+  testnet?: boolean
+  balance?: number | null
+  error?: string
 }
 
 export interface BotCreate {

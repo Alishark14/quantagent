@@ -1,14 +1,22 @@
 """FastAPI dashboard backend for QuantAgent."""
 
+import asyncio
+import logging
+import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Allow importing from the root quantagent package
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel as _BaseModel
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 from database import (
     create_bot,
@@ -49,7 +57,59 @@ from trade_analyzer import (
     get_all_enriched,
 )
 
-app = FastAPI(title="QuantAgent Dashboard API", version="1.0.0")
+async def guardian_loop() -> None:
+    """Run position reconciliation every 60 seconds."""
+    await asyncio.sleep(10)  # Let the server finish starting before first run
+    while True:
+        try:
+            from utils.position_guardian import reconcile_positions
+            all_bots = get_all_bots()
+            await asyncio.to_thread(reconcile_positions, all_bots)
+        except Exception as e:
+            logger.error(f"Guardian loop error: {e}")
+        await asyncio.sleep(60)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Startup ────────────────────────────────────────────────────────────────
+    init_db()
+
+    # Clean up stale "running" bots whose processes died while the server was down
+    for bot in get_all_bots():
+        if bot["status"] == "running":
+            pid = bot.get("pid")
+            is_alive = False
+            if pid:
+                try:
+                    os.kill(pid, 0)
+                    is_alive = True
+                except (ProcessLookupError, OSError):
+                    pass
+            if not is_alive:
+                update_bot_status(
+                    bot["id"], "stopped",
+                    error="Process died (detected on startup)",
+                )
+                logger.warning(
+                    f"Startup cleanup: bot '{bot['name']}' had dead PID {pid}, reset to stopped"
+                )
+
+    guardian_task = asyncio.create_task(guardian_loop())
+    logger.info("Position Guardian started")
+
+    yield
+
+    # ── Shutdown ───────────────────────────────────────────────────────────────
+    guardian_task.cancel()
+    try:
+        await guardian_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Position Guardian stopped")
+
+
+app = FastAPI(title="QuantAgent Dashboard API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,16 +119,6 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-async def startup():
-    init_db()
-    # Reconcile: bots marked running but whose PID is no longer alive
-    for bot in get_all_bots():
-        if bot["status"] == "running":
-            if get_bot_status(bot["id"]) != "running":
-                update_bot_status(bot["id"], "stopped")
-
-
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -76,21 +126,26 @@ def health():
     return {"status": "ok"}
 
 
-# ── Performance analytics (existing, now with optional bot_id filter) ─────────
+# ── Performance analytics (existing, now with optional bot_id + mode filters) ─
 
 def _filter_enriched_by_bot(enriched: list[dict], bot_id: str) -> list[dict]:
     """Filter enriched trades to those belonging to a specific bot."""
-    return [
-        t for t in enriched
-        if t["trade"].get("bot_id") == bot_id
-    ]
+    return [t for t in enriched if t.get("bot_id") == bot_id]
+
+
+def _filter_enriched_by_mode(enriched: list[dict], mode: str) -> list[dict]:
+    """Filter enriched trades by trading mode (paper/live)."""
+    if not mode or mode == "all":
+        return enriched
+    return [t for t in enriched if t.get("trading_mode", "paper") == mode]
 
 
 @app.get("/api/overview", response_model=OverviewResponse)
-def overview(bot_id: str = Query("")):
+def overview(bot_id: str = Query(""), mode: str = Query("all")):
     enriched = get_all_enriched()
     if bot_id:
         enriched = _filter_enriched_by_bot(enriched, bot_id)
+    enriched = _filter_enriched_by_mode(enriched, mode)
     return compute_overview(enriched)
 
 
@@ -102,10 +157,13 @@ def trades(
     direction: str = Query(""),
     exit_type: str = Query(""),
     bot_id: str = Query(""),
+    bot_name: str = Query(""),
+    mode: str = Query("all"),
 ):
     enriched = get_all_enriched()
     if bot_id:
         enriched = _filter_enriched_by_bot(enriched, bot_id)
+    enriched = _filter_enriched_by_mode(enriched, mode)
     executed = [t for t in enriched if t["trade"].get("status") == "executed"]
 
     if symbol:
@@ -114,6 +172,8 @@ def trades(
         executed = [t for t in executed if t["trade"].get("direction", "") == direction.upper()]
     if exit_type:
         executed = [t for t in executed if t.get("exit_type", "") == exit_type.lower()]
+    if bot_name:
+        executed = [t for t in executed if t.get("bot_name", "unknown") == bot_name]
 
     executed = sorted(executed, key=lambda t: t["trade"].get("timestamp", ""), reverse=True)
     total = len(executed)
@@ -142,16 +202,23 @@ def trades(
             status=trade.get("status", ""),
             estimated=t["estimated"],
             agreement_level=t.get("agreement_level", "0/3"),
+            bot_name=t.get("bot_name", "unknown"),
+            bot_id=t.get("bot_id", ""),
+            position_size_usd=float(trade.get("position_size_usd", 0)),
+            quantity=float(trade.get("quantity", 0)),
+            trading_mode=t.get("trading_mode", "paper"),
+            exchange=trade.get("exchange", ""),
         ))
 
     return TradesResponse(trades=records, total=total, offset=offset, limit=limit)
 
 
 @app.get("/api/agents", response_model=AgentsResponse)
-def agents(bot_id: str = Query("")):
+def agents(bot_id: str = Query(""), mode: str = Query("all")):
     enriched = get_all_enriched()
     if bot_id:
         enriched = _filter_enriched_by_bot(enriched, bot_id)
+    enriched = _filter_enriched_by_mode(enriched, mode)
     stats = compute_agent_stats(enriched)
     return AgentsResponse(
         agents=stats["agents"],
@@ -161,21 +228,24 @@ def agents(bot_id: str = Query("")):
 
 @app.get("/api/breakdown")
 def breakdown(
-    dimension: str = Query("asset", regex="^(asset|timeframe|direction)$"),
+    dimension: str = Query("asset", pattern="^(asset|timeframe|direction|exchange|bot)$"),
     bot_id: str = Query(""),
+    mode: str = Query("all"),
 ):
     enriched = get_all_enriched()
     if bot_id:
         enriched = _filter_enriched_by_bot(enriched, bot_id)
+    enriched = _filter_enriched_by_mode(enriched, mode)
     rows = compute_breakdown(enriched, dimension)
     return {"dimension": dimension, "data": rows}
 
 
 @app.get("/api/exits", response_model=ExitsResponse)
-def exits(bot_id: str = Query("")):
+def exits(bot_id: str = Query(""), mode: str = Query("all")):
     enriched = get_all_enriched()
     if bot_id:
         enriched = _filter_enriched_by_bot(enriched, bot_id)
+    enriched = _filter_enriched_by_mode(enriched, mode)
     return compute_exits(enriched)
 
 
@@ -212,11 +282,102 @@ def config():
         )
 
 
+# ── Settings: Exchange connections ────────────────────────────────────────────
+
+@app.get("/api/settings/exchanges")
+async def get_exchange_status():
+    """Check connectivity and balance for all configured exchanges."""
+    from exchanges import get_adapter
+    from config import Config
+    results = []
+    for name in ["dydx", "hyperliquid", "deribit"]:
+        try:
+            adapter = get_adapter(name)
+            balance = await asyncio.to_thread(adapter.get_balance)
+            results.append({
+                "name": name,
+                "status": "connected",
+                "testnet": Config.EXCHANGE_TESTNET,
+                "balance": balance,
+            })
+        except Exception as e:
+            results.append({
+                "name": name,
+                "status": "error",
+                "error": str(e),
+                "balance": None,
+                "testnet": None,
+            })
+    return results
+
+
+# ── WebSocket: Live bot log streaming ─────────────────────────────────────────
+
+@app.websocket("/ws/bots/{bot_id}/logs")
+async def bot_log_stream(websocket: WebSocket, bot_id: str):
+    """Stream bot log file in real-time via WebSocket."""
+    await websocket.accept()
+
+    bot = get_bot(bot_id)
+    if not bot:
+        await websocket.send_json({"error": "Bot not found"})
+        await websocket.close()
+        return
+
+    symbol = bot["symbol"].lower()
+    mode = bot["trading_mode"]
+    log_path = PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log"
+
+    try:
+        # Send existing log content first (last 200 lines)
+        if log_path.exists():
+            with open(log_path, "r", errors="replace") as f:
+                lines = f.readlines()
+                for line in lines[-200:]:
+                    await websocket.send_json({"type": "log", "data": line.rstrip()})
+
+        # Then tail the file for new content
+        last_size = log_path.stat().st_size if log_path.exists() else 0
+
+        while True:
+            await asyncio.sleep(1)
+
+            if not log_path.exists():
+                continue
+
+            current_size = log_path.stat().st_size
+            if current_size > last_size:
+                with open(log_path, "r", errors="replace") as f:
+                    f.seek(last_size)
+                    new_content = f.read()
+                    for line in new_content.splitlines():
+                        if line.strip():
+                            await websocket.send_json({"type": "log", "data": line})
+                last_size = current_size
+            elif current_size < last_size:
+                # File was truncated/rotated — resend from start
+                last_size = 0
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "data": str(e)})
+        except Exception:
+            pass
+
+
 # ── Bot CRUD ──────────────────────────────────────────────────────────────────
 
 @app.post("/api/bots", response_model=BotResponse, status_code=201)
 def api_create_bot(payload: BotCreate):
-    bot = create_bot(payload.model_dump())
+    bot_dict = payload.model_dump()
+    # Auto-set testnet based on mode: paper → testnet, live → mainnet
+    if bot_dict["trading_mode"] == "paper":
+        bot_dict["exchange_testnet"] = 1
+    else:
+        bot_dict["exchange_testnet"] = 0
+    bot = create_bot(bot_dict)
     return BotResponse(**bot)
 
 
@@ -279,7 +440,10 @@ def api_stop_bot(bot_id: str):
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     stop_bot(bot_id)
+    # Positions are left open intentionally — the guardian picks them up
+    # and closes them after the 2× timeframe grace period if the bot isn't restarted.
     update_bot_status(bot_id, "stopped", pid=None)
+    logger.info(f"Bot '{bot['name']}' stopped manually. Open positions left for guardian.")
     return BotResponse(**get_bot(bot_id))
 
 
@@ -355,3 +519,39 @@ def api_internal_trade(payload: InternalTradePayload):
     if pnl is not None and float(pnl) < 0:
         increment_daily_loss(payload.bot_id, abs(float(pnl)))
     return {"ok": True}
+
+
+# ── Guardian ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/guardian/status")
+def api_guardian_status():
+    """Return current guardian state — orphan tracker and active flag."""
+    from utils.position_guardian import _orphan_tracker
+    return {
+        "active": True,
+        "orphan_tracker": {k: v.isoformat() for k, v in _orphan_tracker.items()},
+    }
+
+
+# ── Emergency ─────────────────────────────────────────────────────────────────
+
+@app.post("/api/emergency/close-all-positions")
+def api_emergency_close_all():
+    """Nuclear option — market-close every open position and cancel every open order."""
+    from exchanges import get_adapter
+
+    adapter = get_adapter()
+    positions = adapter.get_open_positions()
+
+    results: dict[str, int] = {"closed": 0, "failed": 0, "orders_cancelled": 0}
+
+    for pos in positions:
+        try:
+            adapter.close_position(pos.symbol, pos.side, pos.size)
+            results["closed"] += 1
+            results["orders_cancelled"] += adapter.cancel_all_orders(pos.symbol)
+        except Exception:
+            results["failed"] += 1
+
+    logger.warning(f"EMERGENCY CLOSE ALL: {results}")
+    return results

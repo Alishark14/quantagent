@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, Plus, Zap } from 'lucide-react'
+import { AlertTriangle, Plus, Shield, X, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import type { Bot, BotCreate } from '../types'
 import BotCard from '../components/bots/BotCard'
@@ -24,6 +24,10 @@ export default function Bots({ refreshTick }: Props) {
   const [killConfirm, setKillConfirm] = useState(false)
   const [killing, setKilling] = useState(false)
 
+  const [closeConfirm, setCloseConfirm] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const [guardianActive, setGuardianActive] = useState(false)
+
   const fetchBots = useCallback(() => {
     api.getBots()
       .then(data => { setBots(data); setError(null) })
@@ -42,6 +46,13 @@ export default function Bots({ refreshTick }: Props) {
     const id = setInterval(fetchBots, AUTO_REFRESH_MS)
     return () => clearInterval(id)
   }, [fetchBots])
+
+  // Check guardian status once on mount
+  useEffect(() => {
+    api.guardianStatus()
+      .then(s => setGuardianActive(s.active))
+      .catch(() => setGuardianActive(false))
+  }, [])
 
   // ── Bot actions ───────────────────────────────────────────────────────────
 
@@ -72,6 +83,32 @@ export default function Bots({ refreshTick }: Props) {
       setError(err.message ?? 'Kill all failed')
     } finally {
       setKilling(false)
+    }
+  }
+
+  async function handleCloseAllPositions() {
+    if (!closeConfirm) {
+      setCloseConfirm(true)
+      setTimeout(() => setCloseConfirm(false), 4000)
+      return
+    }
+    setClosing(true)
+    setCloseConfirm(false)
+    try {
+      const result = await api.closeAllPositions()
+      setError(null)
+      // Show a brief success message via error banner (reuse the slot)
+      if (result.closed === 0 && result.failed === 0) {
+        setError('No open positions found.')
+      } else {
+        setError(
+          `Closed ${result.closed} position(s). ${result.failed > 0 ? `${result.failed} failed.` : ''} Cancelled ${result.orders_cancelled} order(s).`
+        )
+      }
+    } catch (err: any) {
+      setError(err.message ?? 'Emergency close failed')
+    } finally {
+      setClosing(false)
     }
   }
 
@@ -110,6 +147,34 @@ export default function Bots({ refreshTick }: Props) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Guardian indicator */}
+          <div className="flex items-center gap-1.5 text-xs text-text-muted">
+            <Shield size={13} className={guardianActive ? 'text-[#22c55e]' : 'text-[#6b7280]'} />
+            <span className={guardianActive ? 'text-[#22c55e]' : 'text-[#6b7280]'}>
+              {guardianActive ? 'Guardian active' : 'Guardian offline'}
+            </span>
+            {guardianActive && (
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#22c55e] opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#22c55e]" />
+              </span>
+            )}
+          </div>
+
+          {/* Close All Positions */}
+          <button
+            onClick={handleCloseAllPositions}
+            disabled={closing}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border transition-colors disabled:opacity-50 ${
+              closeConfirm
+                ? 'bg-[#ef4444] border-[#ef4444] text-white animate-pulse'
+                : 'bg-transparent border-[#ef4444]/50 text-[#ef4444] hover:bg-[#ef4444]/10'
+            }`}
+          >
+            <X size={14} />
+            {closing ? 'Closing…' : closeConfirm ? 'Are you sure?' : 'Close All Positions'}
+          </button>
+
           {/* Kill All */}
           {hasRunning && (
             <button

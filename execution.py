@@ -1,85 +1,18 @@
-"""Execute trades on testnet via CCXT. Supports Deribit and dYdX v4."""
+"""Execute trades via the pluggable exchange adapter system.
+
+The core engine is exchange-agnostic — it calls only the ExchangeAdapter interface.
+Exchange-specific logic lives in exchanges/<name>_adapter.py.
+"""
 
 import logging
-import threading
+import traceback
 from datetime import datetime, timezone
 
-import ccxt
-
+from exchanges import get_adapter
 from config import Config
+from utils.position_monitor import start_position_monitor, _active_monitors
 
 logger = logging.getLogger(__name__)
-
-# Symbol maps per exchange
-_DERIBIT_SYMBOL_MAP = {
-    "BTC": "BTC/USD:BTC",
-    "ETH": "ETH/USD:ETH",
-}
-
-_DYDX_SYMBOL_MAP = {
-    "BTC": "BTC/USD:USD",
-    "ETH": "ETH/USD:USD",
-}
-
-
-def get_exchange_client() -> ccxt.Exchange:
-    """Create the appropriate CCXT exchange client based on Config.EXCHANGE."""
-    exchange_name = Config.EXCHANGE.lower()
-
-    if exchange_name == "deribit":
-        exchange = ccxt.deribit({
-            "apiKey": Config.DERIBIT_TESTNET_API_KEY,
-            "secret": Config.DERIBIT_TESTNET_SECRET,
-            "enableRateLimit": True,
-        })
-        if Config.EXCHANGE_TESTNET:
-            exchange.set_sandbox_mode(True)
-        return exchange
-
-    elif exchange_name == "dydx":
-        exchange = ccxt.dydx({
-            "apiKey": Config.DYDX_ADDRESS,
-            "secret": Config.DYDX_MNEMONIC,
-            "enableRateLimit": True,
-        })
-        if Config.EXCHANGE_TESTNET:
-            exchange.set_sandbox_mode(True)
-        return exchange
-
-    else:
-        raise ValueError(
-            f"Unsupported exchange: '{exchange_name}'. Use 'deribit' or 'dydx'."
-        )
-
-
-def to_exchange_symbol(symbol: str) -> str:
-    """Convert 'BTCUSDT' to the exchange-specific perpetual symbol format."""
-    if "/" in symbol:
-        return symbol
-
-    exchange_name = Config.EXCHANGE.lower()
-    symbol_map = _DYDX_SYMBOL_MAP if exchange_name == "dydx" else _DERIBIT_SYMBOL_MAP
-
-    for base, mapped in symbol_map.items():
-        if symbol.upper().startswith(base):
-            return mapped
-
-    raise ValueError(
-        f"No symbol mapping for '{symbol}' on {exchange_name}. "
-        f"Supported bases: {list(symbol_map.keys())}"
-    )
-
-
-def usd_to_contracts(position_size_usd: float, entry_price: float, exchange_name: str) -> float:
-    """Convert USD position size to contract quantity for the exchange.
-
-    Deribit: USD-notional contracts — amount IS the USD value.
-    dYdX:    base-currency contracts — amount = USD / price.
-    """
-    if exchange_name == "dydx":
-        return round(position_size_usd / entry_price, 6)
-    return position_size_usd  # deribit
-
 
 _TIMEFRAME_MINUTES = {
     "1m": 1,
@@ -91,64 +24,41 @@ _TIMEFRAME_MINUTES = {
 }
 
 
-def schedule_forced_exit(
-    symbol: str,
-    timeframe: str,
-    forecast_candles: int,
-    exchange: ccxt.Exchange,
+def _log_skipped_signal(
+    state: dict, symbol: str, exchange_name: str, direction: str, reason: str
 ) -> None:
-    """Schedule a time-based forced exit after forecast_candles × timeframe duration.
+    """Append a skipped-signal entry to trade_summary.jsonl."""
+    import json
+    import os
+    from pathlib import Path
 
-    Starts a daemon background thread that closes any open position for the
-    symbol and cancels remaining open orders when the timer fires.
-    """
-    timeframe_minutes = _TIMEFRAME_MINUTES.get(timeframe, 60)
-    delay_seconds = forecast_candles * timeframe_minutes * 60
+    log_dir = Path("trade_logs")
+    log_dir.mkdir(exist_ok=True)
 
-    def _force_exit():
-        logger.info(f"Time-based exit triggered for {symbol} after {forecast_candles} candles")
-        try:
-            positions = exchange.fetch_positions([symbol])
-            open_pos = [p for p in positions if p.get("contracts", 0) and p["contracts"] != 0]
-            if open_pos:
-                pos = open_pos[0]
-                side = pos.get("side", "long")
-                contracts = abs(pos["contracts"])
-                if side == "long":
-                    exchange.create_market_sell_order(symbol, contracts, {"reduceOnly": True})
-                else:
-                    exchange.create_market_buy_order(symbol, contracts, {"reduceOnly": True})
-                logger.info(f"Forced exit executed for {symbol}: closed {side} position of {contracts}")
-            else:
-                logger.info(f"Time-based exit: no open position found for {symbol}, skipping")
-
-            # Cancel any remaining open orders (SL/TP)
-            open_orders = exchange.fetch_open_orders(symbol)
-            for order in open_orders:
-                try:
-                    exchange.cancel_order(order["id"], symbol)
-                except Exception as cancel_err:
-                    logger.warning(f"Failed to cancel order {order['id']}: {cancel_err}")
-            if open_orders:
-                logger.info(f"Cancelled {len(open_orders)} remaining open orders for {symbol}")
-
-        except Exception as e:
-            logger.error(f"Time-based forced exit failed for {symbol}: {e}")
-
-    timer = threading.Timer(delay_seconds, _force_exit)
-    timer.daemon = True
-    timer.start()
-    logger.info(
-        f"Forced exit scheduled for {symbol} in {delay_seconds}s "
-        f"({forecast_candles} × {timeframe_minutes}min)"
-    )
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "skipped",
+        "reason": reason,
+        "symbol": symbol,
+        "exchange": exchange_name,
+        "signal": direction,
+        "indicator_signal": state.get("indicator_signal"),
+        "pattern_signal": state.get("pattern_signal"),
+        "trend_signal": state.get("trend_signal"),
+        "bot_name": os.getenv("BOT_NAME", "manual"),
+        "bot_id": os.getenv("BOT_ID", ""),
+        "position_size_usd": state.get("position_size_usd", state.get("position_size", 0)),
+    }
+    with open(log_dir / "trade_summary.jsonl", "a") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
 
 
 def execute_trade_node(state: dict) -> dict:
-    """LangGraph node: execute the trade on the configured exchange testnet.
+    """LangGraph node: execute the trade via the exchange adapter.
 
-    Places a market order with attached stop-loss and take-profit.
-    Amount units depend on the exchange — see usd_to_contracts().
+    Exchange-agnostic — dispatches to the configured adapter.
+    Adapters with native SL/TP (Hyperliquid, Deribit) place native orders.
+    Adapters without (dYdX) use the position monitor for SL/TP/time exit.
     """
     decision = state.get("decision", {})
     symbol = state.get("symbol", Config.SYMBOL)
@@ -161,68 +71,147 @@ def execute_trade_node(state: dict) -> dict:
     entry_price = float(decision["entry_price"])
     stop_loss = float(decision["stop_loss"])
     take_profit = float(decision["take_profit"])
+    position_size_usd = float(decision.get("position_size_usd", 100))
 
-    exchange_name = Config.EXCHANGE.lower()
-    exchange_symbol = to_exchange_symbol(symbol)
+    adapter = get_adapter()
+    exchange_name = adapter.name
+    exchange_symbol = adapter.to_exchange_symbol(symbol)
     side = "buy" if direction == "LONG" else "sell"
     close_side = "sell" if direction == "LONG" else "buy"
 
-    position_size_usd = float(decision.get("position_size_usd", 100))
-    amount = usd_to_contracts(position_size_usd, entry_price, exchange_name)
+    # ── One-position-at-a-time check (fast local path) ────────────────────────
+    # Check active monitors before any API call — O(1), no network.
+    if exchange_symbol in _active_monitors and not _active_monitors[exchange_symbol]._stop_event.is_set():
+        logger.info(
+            f"Active monitor running for {exchange_symbol} — position still open, skipping"
+        )
+        _log_skipped_signal(
+            state, symbol, exchange_name, direction, "Position still open (monitor active)"
+        )
+        return {"trade_result": {
+            "status": "skipped",
+            "reason": "Position still open (monitor active)",
+            "signal": direction,
+            "symbol": symbol,
+            "exchange": exchange_name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }}
 
     logger.info(
         f"Executing {direction} on {exchange_symbol} ({exchange_name}) "
-        f"@ ~{entry_price} | Size: {amount} contracts (${position_size_usd})"
-    )
-
-    # dYdX uses triggerPrice; Deribit uses stopPrice
-    sl_params = (
-        {"triggerPrice": float(stop_loss), "reduceOnly": True}
-        if exchange_name == "dydx"
-        else {"stopPrice": float(stop_loss), "reduceOnly": True}
-    )
-    tp_params = (
-        {"triggerPrice": float(take_profit), "reduceOnly": True}
-        if exchange_name == "dydx"
-        else {"stopPrice": float(take_profit), "reduceOnly": True}
+        f"@ ~{entry_price} | Budget: ${position_size_usd}"
     )
 
     try:
-        exchange = get_exchange_client()
-
-        # Place market entry order
-        if side == "buy":
-            order = exchange.create_market_buy_order(exchange_symbol, amount)
-        else:
-            order = exchange.create_market_sell_order(exchange_symbol, amount)
-
-        order_id = order.get("id", "unknown")
-        logger.info(f"Market order placed: {order_id}")
-
-        # Place stop-loss
-        try:
-            exchange.create_order(
-                exchange_symbol, "stop_market", close_side, amount, None, sl_params
+        # ── One-position-at-a-time check (exchange API) ───────────────────────
+        if adapter.has_open_position(symbol):
+            logger.info(f"Open position detected on {exchange_symbol} — skipping trade")
+            _log_skipped_signal(
+                state, symbol, exchange_name, direction,
+                "Position already open — one position at a time"
             )
-            logger.info(f"Stop-loss set at {stop_loss}")
-        except Exception as e:
-            logger.warning(f"Failed to set stop-loss: {e}")
+            return {"trade_result": {
+                "status": "skipped",
+                "reason": "Position already open — one position at a time",
+                "signal": direction,
+                "symbol": symbol,
+                "exchange": exchange_name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }}
 
-        # Place take-profit
-        try:
-            exchange.create_order(
-                exchange_symbol, "take_profit_market", close_side, amount, None, tp_params
-            )
-            logger.info(f"Take-profit set at {take_profit}")
-        except Exception as e:
-            logger.warning(f"Failed to set take-profit: {e}")
+        # ── Convert USD to base currency quantity ─────────────────────────────
+        current_price = adapter.get_current_price(symbol)
+        quantity = position_size_usd / current_price  # base currency contracts
 
-        schedule_forced_exit(
-            symbol=exchange_symbol,
-            timeframe=state.get("timeframe", "1h"),
-            forecast_candles=Config.FORECAST_CANDLES,
-            exchange=exchange,
+        # ── Precision adjustment ──────────────────────────────────────────────
+        quantity, stop_loss = adapter.precision_adjust(symbol, quantity, stop_loss)
+        _, take_profit = adapter.precision_adjust(symbol, 0, take_profit)
+
+        logger.info(
+            f"Order: {direction} | qty={quantity} | SL={stop_loss} | TP={take_profit} "
+            f"| price~{current_price}"
         )
+
+        # ── Entry order ───────────────────────────────────────────────────────
+        try:
+            entry_result = adapter.place_market_order(symbol, side, quantity)
+        except Exception as e:
+            logger.error(f"Entry order failed: {e}\n{traceback.format_exc()}")
+            raise
+
+        order_id = entry_result.order_id
+        logger.info(
+            f"Entry order placed: {order_id} | status: {entry_result.status}"
+        )
+
+        # ── SL / TP ───────────────────────────────────────────────────────────
+        if adapter.supports_native_sl_tp():
+            # Exchange handles SL/TP natively (Hyperliquid, Deribit)
+            sl_result = adapter.place_stop_loss(
+                symbol, close_side, quantity, stop_loss
+            )
+
+            # SAFETY: If SL failed, close immediately rather than leaving
+            # the position unprotected.
+            if sl_result is None:
+                logger.error(
+                    f"SL placement failed for {exchange_symbol} — closing for safety"
+                )
+                try:
+                    adapter.close_position(symbol, direction.lower(), quantity)
+                    return {"trade_result": {
+                        "status": "closed_no_sl",
+                        "order_id": order_id,
+                        "direction": direction,
+                        "symbol": symbol,
+                        "exchange": exchange_name,
+                        "entry_price": current_price,
+                        "close_reason": "Stop-loss placement failed, position closed for safety",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }}
+                except Exception as close_err:
+                    logger.error(
+                        f"CRITICAL: Failed to close unprotected position on "
+                        f"{exchange_symbol}: {close_err}"
+                    )
+                    return {"trade_result": {
+                        "status": "unprotected",
+                        "order_id": order_id,
+                        "direction": direction,
+                        "symbol": symbol,
+                        "exchange": exchange_name,
+                        "entry_price": current_price,
+                        "close_reason": f"SL failed AND close failed: {close_err}",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }}
+
+            tp_result = adapter.place_take_profit(
+                symbol, close_side, quantity, take_profit
+            )
+            logger.info(
+                f"SL set: {sl_result.order_id} | "
+                f"TP: {tp_result.order_id if tp_result else 'failed (non-critical)'}"
+            )
+            sl_type = "native"
+
+        else:
+            # Use position monitor for SL/TP/time-based exit (dYdX)
+            start_position_monitor(
+                exchange=adapter.get_exchange_client(),
+                symbol=exchange_symbol,
+                direction=direction,
+                amount=quantity,
+                entry_price=current_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                timeframe=state.get("timeframe", Config.TIMEFRAME),
+                forecast_candles=Config.FORECAST_CANDLES,
+            )
+            logger.info(
+                f"Position monitor started for {exchange_symbol} "
+                f"(SL: {stop_loss}, TP: {take_profit})"
+            )
+            sl_type = "monitor"
 
         trade_result = {
             "status": "executed",
@@ -230,19 +219,23 @@ def execute_trade_node(state: dict) -> dict:
             "direction": direction,
             "symbol": symbol,
             "exchange": exchange_name,
-            "quantity": amount,
-            "entry_price": entry_price,
+            "quantity": quantity,
+            "entry_price": current_price,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
+            "position_size_usd": position_size_usd,
+            "sl_type": sl_type,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "justification": decision.get("justification", ""),
         }
 
     except Exception as e:
-        logger.error(f"Trade execution failed: {e}")
+        tb = traceback.format_exc()
+        logger.error(f"Trade execution failed: {e}\n{tb}")
         trade_result = {
             "status": "failed",
             "error": str(e),
+            "error_traceback": tb,
             "direction": direction,
             "symbol": symbol,
             "exchange": exchange_name,
@@ -256,6 +249,7 @@ def execute_trade_node(state: dict) -> dict:
 def log_trade(trade_result: dict, decision: dict) -> None:
     """Log trade details to file for tracking."""
     import json
+    import os
     from pathlib import Path
 
     log_dir = Path("trade_logs")
@@ -264,15 +258,20 @@ def log_trade(trade_result: dict, decision: dict) -> None:
     timestamp = trade_result.get("timestamp", datetime.now(timezone.utc).isoformat())
     filename = f"trade_{timestamp.replace(':', '-').replace('.', '-')}.json"
 
+    bot_name = os.getenv("BOT_NAME", "unknown")
+    bot_id_env = os.getenv("BOT_ID", "")
+
     log_entry = {
         "trade": trade_result,
         "decision": decision,
+        "bot_name": bot_name,
+        "bot_id": bot_id_env,
+        "trading_mode": Config.TRADING_MODE,
     }
 
     with open(log_dir / filename, "w") as f:
         json.dump(log_entry, f, indent=2, default=str)
 
-    # Also append to a running summary log
     summary_file = log_dir / "trade_summary.jsonl"
     with open(summary_file, "a") as f:
         f.write(json.dumps(log_entry, default=str) + "\n")
@@ -280,14 +279,12 @@ def log_trade(trade_result: dict, decision: dict) -> None:
     logger.info(f"Trade logged to {log_dir / filename}")
 
     # Report to dashboard API if running as a managed bot
-    import os
-    bot_id = os.getenv("BOT_ID")
-    if bot_id:
+    if bot_id_env:
         import requests
         try:
             requests.post(
                 "http://localhost:8001/api/internal/trade",
-                json={"bot_id": bot_id, "trade_data": log_entry},
+                json={"bot_id": bot_id_env, "trade_data": log_entry},
                 timeout=5,
             )
         except Exception:

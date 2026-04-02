@@ -21,14 +21,16 @@ def main():
             mapped = to_exchange_symbol(sym)
             print(f"  {sym} → {mapped}")
 
-        # Test balance fetch
+        # Test balance fetch (dYdX CCXT bug: only 'free' is populated, 'total' is None)
         balance = exchange.fetch_balance()
-        print(f"Balance: {balance.get('total', {})}")
+        free = balance.get("free", {})
+        print(f"Free collateral: {free}")
 
-        # Test ticker
+        # Test ticker (uses OHLCV fallback for exchanges that don't support fetchTicker)
         btc_symbol = to_exchange_symbol("BTCUSDT")
-        ticker = exchange.fetch_ticker(btc_symbol)
-        print(f"BTC last price: ${ticker['last']}")
+        from utils.data import get_current_price
+        price = get_current_price(btc_symbol, exchange)
+        print(f"BTC last price: ${price}")
 
         print("\n✓ Exchange connection successful!")
 

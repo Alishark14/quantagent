@@ -3,17 +3,23 @@
 Runs the trading pipeline on a schedule or as a one-shot analysis.
 
 Usage:
-    # One-shot analysis (dry run, no trades)
+    # One-shot dry run (no trades)
     python main.py --once --dry-run
 
-    # One-shot with trade execution
-    python main.py --once
+    # One-shot with trade execution on dYdX testnet
+    python main.py --once --exchange dydx
 
-    # Scheduled (runs every hour on candle close)
-    python main.py
+    # Specific symbol, timeframe, budget
+    python main.py --once --symbol ETHUSDT --timeframe 15m --budget 500
 
     # Multiple symbols
-    python main.py --symbols BTCUSDT ETHUSDT
+    python main.py --symbol BTCUSDT ETHUSDT
+
+    # Scheduled (runs every candle on close)
+    python main.py --exchange dydx --timeframe 1h
+
+    # Switch to mainnet (real money)
+    python main.py --exchange dydx --mainnet
 """
 
 import argparse
@@ -109,7 +115,11 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
             print(f"  Vol Ratio: {sizing.get('volatility', {}).get('volatility_ratio', 'N/A')}")
             print(f"  Agreement: {agreement.get('agreeing_count', '?')}/3 (×{agreement.get('confidence_multiplier', '?')})")
             print(f"  Signals:   I={agreement.get('signals', {}).get('indicator', '?')} P={agreement.get('signals', {}).get('pattern', '?')} T={agreement.get('signals', {}).get('trend', '?')}")
-            print(f"  Trade:     {trade.get('status', 'N/A')}")
+            trade_status = trade.get("status", "N/A")
+            if trade_status == "skipped":
+                print(f"  Trade:     skipped — {trade.get('reason', '')}")
+            else:
+                print(f"  Trade:     {trade_status}")
             print(f"{'─'*50}")
             print(f"  Token usage (Sonnet $3/$15 per 1M):")
             for line in cost_lines:
@@ -122,32 +132,73 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="QuantAgent — Multi-Agent HFT System")
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Run a single analysis cycle and exit",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Analysis only, no trade execution",
-    )
-    parser.add_argument(
-        "--symbols",
-        nargs="+",
-        default=[Config.SYMBOL],
-        help="Trading symbols (default: from .env)",
-    )
-    parser.add_argument(
-        "--timeframe",
-        default=Config.TIMEFRAME,
-        help="Candle timeframe (default: from .env)",
-    )
+    parser = argparse.ArgumentParser(description="QuantAgent — Multi-Agent LLM Trading System")
+
+    # Run mode
+    parser.add_argument("--once", action="store_true", help="Run a single cycle and exit")
+    parser.add_argument("--dry-run", action="store_true", help="Analysis only, no trade execution")
+
+    # Symbol / timeframe
+    parser.add_argument("--symbol", "--symbols", nargs="+", dest="symbols",
+                        default=None, help="Trading symbol(s), e.g. BTCUSDT ETHUSDT")
+    parser.add_argument("--timeframe", default=None,
+                        help="Candle interval: 1m 5m 15m 30m 1h 4h (default: 1h)")
+
+    # Exchange
+    parser.add_argument("--exchange", default=None, choices=["dydx", "deribit"],
+                        help="Exchange to trade on (default: dydx)")
+    net_group = parser.add_mutually_exclusive_group()
+    net_group.add_argument("--testnet", action="store_true", default=False,
+                           help="Use testnet (default when EXCHANGE_TESTNET not set)")
+    net_group.add_argument("--mainnet", action="store_true", default=False,
+                           help="Use mainnet — real money, be careful")
+
+    # Risk / position sizing
+    parser.add_argument("--budget", type=float, default=None,
+                        help="Account balance in USD (default: fetch from exchange)")
+    parser.add_argument("--atr-multiplier", type=float, default=None, dest="atr_multiplier",
+                        help="ATR multiplier for stop-loss distance (default: 1.5)")
+    parser.add_argument("--forecast-candles", type=int, default=None, dest="forecast_candles",
+                        help="Number of candles to forecast (default: 3)")
+    parser.add_argument("--rr-min", type=float, default=None, dest="rr_min",
+                        help="Minimum risk-reward ratio (default: 1.2)")
+    parser.add_argument("--rr-max", type=float, default=None, dest="rr_max",
+                        help="Maximum risk-reward ratio (default: 1.8)")
+
     args = parser.parse_args()
 
+    # ── Apply CLI overrides to Config ─────────────────────────────────────────
+    # Config uses class-level attributes; mutating them here affects all modules
+    # that imported Config (they hold a reference to the same class object).
+    if args.symbols:
+        Config.SYMBOL = args.symbols[0]
+    if args.timeframe:
+        Config.TIMEFRAME = args.timeframe
+    if args.exchange:
+        Config.EXCHANGE = args.exchange
+    if args.mainnet:
+        Config.EXCHANGE_TESTNET = False
+    elif args.testnet:
+        Config.EXCHANGE_TESTNET = True
+    if args.budget is not None:
+        Config.ACCOUNT_BALANCE = args.budget
+        os.environ["ACCOUNT_BALANCE"] = str(args.budget)  # also visible via os.getenv
+    if args.atr_multiplier is not None:
+        Config.ATR_MULTIPLIER = args.atr_multiplier
+    if args.forecast_candles is not None:
+        Config.FORECAST_CANDLES = args.forecast_candles
+    if args.rr_min is not None:
+        Config.RR_RATIO_MIN = args.rr_min
+    if args.rr_max is not None:
+        Config.RR_RATIO_MAX = args.rr_max
+
+    # Resolve effective values (after potential CLI overrides)
+    symbols = args.symbols or [Config.SYMBOL]
+    timeframe = args.timeframe or Config.TIMEFRAME
     execute_trades = not args.dry_run
-    mode = "LIVE (testnet)" if execute_trades else "DRY RUN"
+
+    net_label = "mainnet ⚠️" if not Config.EXCHANGE_TESTNET else "testnet"
+    mode = f"LIVE ({net_label})" if execute_trades else "DRY RUN"
 
     if Config.LANGSMITH_ENABLED:
         logger.info(f"LangSmith tracing enabled → project: {Config.LANGSMITH_PROJECT}")
@@ -159,43 +210,43 @@ def main():
 ║          QuantAgent v1.0                 ║
 ║   Multi-Agent LLM Trading System         ║
 ╠══════════════════════════════════════════╣
-║  Symbols:    {', '.join(args.symbols):<27}║
-║  Timeframe:  {args.timeframe:<27}║
+║  Symbols:    {', '.join(symbols):<27}║
+║  Timeframe:  {timeframe:<27}║
+║  Exchange:   {Config.EXCHANGE} ({net_label}){'':>14}║
 ║  Mode:       {mode:<27}║
-║  LLM:        {Config.MODEL_NAME:<27}║
+║  LLM:        {Config.LLM_MODEL:<27}║
 ╚══════════════════════════════════════════╝
 """)
 
     if args.once:
         logger.info("Running single cycle...")
-        run_cycle(args.symbols, args.timeframe, execute_trades)
+        run_cycle(symbols, timeframe, execute_trades)
         logger.info("Done.")
     else:
         logger.info("Starting scheduled execution...")
 
-        # Map timeframe to cron interval
         interval_map = {
-            "1m": {"minutes": 1},
-            "5m": {"minutes": 5},
+            "1m":  {"minutes": 1},
+            "5m":  {"minutes": 5},
             "15m": {"minutes": 15},
             "30m": {"minutes": 30},
-            "1h": {"hours": 1},
-            "4h": {"hours": 4},
+            "1h":  {"hours": 1},
+            "4h":  {"hours": 4},
         }
 
-        interval = interval_map.get(args.timeframe, {"hours": 1})
+        interval = interval_map.get(timeframe, {"hours": 1})
 
         scheduler = BlockingScheduler()
         scheduler.add_job(
             run_cycle,
             "interval",
-            args=[args.symbols, args.timeframe, execute_trades],
+            args=[symbols, timeframe, execute_trades],
             **interval,
-            next_run_time=datetime.now(timezone.utc),  # Run immediately first
+            next_run_time=datetime.now(timezone.utc),
         )
 
         try:
-            logger.info(f"Scheduler started. Running every {args.timeframe}.")
+            logger.info(f"Scheduler started. Running every {timeframe}.")
             scheduler.start()
         except (KeyboardInterrupt, SystemExit):
             logger.info("Scheduler stopped.")

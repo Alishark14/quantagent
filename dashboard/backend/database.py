@@ -31,7 +31,7 @@ def init_db() -> None:
                 timeframe TEXT NOT NULL DEFAULT '1h',
 
                 budget_usd REAL NOT NULL DEFAULT 500,
-                max_concurrent_positions INTEGER NOT NULL DEFAULT 3,
+                max_concurrent_positions INTEGER NOT NULL DEFAULT 1,
                 trading_mode TEXT NOT NULL DEFAULT 'paper',
 
                 atr_multiplier REAL NOT NULL DEFAULT 1.5,
@@ -39,13 +39,13 @@ def init_db() -> None:
                 rr_ratio_min REAL NOT NULL DEFAULT 1.2,
                 rr_ratio_max REAL NOT NULL DEFAULT 1.8,
                 max_daily_loss_usd REAL NOT NULL DEFAULT 100,
-                max_position_pct REAL NOT NULL DEFAULT 0.5,
+                max_position_pct REAL NOT NULL DEFAULT 1.0,
                 forecast_candles INTEGER NOT NULL DEFAULT 3,
 
                 agents_enabled TEXT NOT NULL DEFAULT 'indicator,pattern,trend',
                 llm_model TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514',
 
-                exchange TEXT NOT NULL DEFAULT 'deribit',
+                exchange TEXT NOT NULL DEFAULT 'dydx',
                 exchange_testnet INTEGER NOT NULL DEFAULT 1,
 
                 status TEXT NOT NULL DEFAULT 'stopped',
@@ -68,6 +68,23 @@ def init_db() -> None:
                 FOREIGN KEY (bot_id) REFERENCES bots(id)
             );
         """)
+        # Migrate: fix bots created with wrong exchange default (deribit → dydx)
+        # and sync exchange_testnet with trading_mode
+        conn.execute("""
+            UPDATE bots SET
+                exchange = 'dydx',
+                exchange_testnet = CASE WHEN trading_mode = 'paper' THEN 1 ELSE 0 END,
+                updated_at = ?
+            WHERE exchange = 'deribit'
+        """, (_now(),))
+        # Migrate: align position sizing to one-position-at-a-time strategy
+        conn.execute("""
+            UPDATE bots SET
+                max_concurrent_positions = 1,
+                max_position_pct = 1.0,
+                updated_at = ?
+            WHERE max_concurrent_positions != 1 OR max_position_pct != 1.0
+        """, (_now(),))
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
@@ -96,14 +113,14 @@ def create_bot(config: dict) -> dict:
         "market_type": config.get("market_type", "perpetual"),
         "timeframe": config.get("timeframe", "1h"),
         "budget_usd": config.get("budget_usd", 500),
-        "max_concurrent_positions": config.get("max_concurrent_positions", 3),
+        "max_concurrent_positions": config.get("max_concurrent_positions", 1),
         "trading_mode": config.get("trading_mode", "paper"),
         "atr_multiplier": config.get("atr_multiplier", 1.5),
         "atr_length": config.get("atr_length", 14),
         "rr_ratio_min": config.get("rr_ratio_min", 1.2),
         "rr_ratio_max": config.get("rr_ratio_max", 1.8),
         "max_daily_loss_usd": config.get("max_daily_loss_usd", 100),
-        "max_position_pct": config.get("max_position_pct", 0.5),
+        "max_position_pct": config.get("max_position_pct", 1.0),
         "forecast_candles": config.get("forecast_candles", 3),
         "agents_enabled": config.get("agents_enabled", "indicator,pattern,trend"),
         "llm_model": config.get("llm_model", "claude-sonnet-4-20250514"),

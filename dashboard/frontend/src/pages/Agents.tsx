@@ -4,6 +4,7 @@ import type { AgentsData } from '../types'
 import AgentAccuracy from '../components/agents/AgentAccuracy'
 import AgentAgreement from '../components/agents/AgentAgreement'
 import BotSelector from '../components/bots/BotSelector'
+import { useGlobalFilter } from '../context/GlobalFilterContext'
 
 interface Props {
   refreshTick: number
@@ -20,14 +21,15 @@ export default function Agents({ refreshTick }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [botId, setBotId] = useState<string | undefined>()
+  const { mode } = useGlobalFilter()
 
   useEffect(() => {
     setLoading(true)
-    api.agents(botId)
+    api.agents(botId, mode)
       .then(d => { setData(d); setError(null) })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [refreshTick, botId])
+  }, [refreshTick, botId, mode])
 
   return (
     <div className="space-y-6">

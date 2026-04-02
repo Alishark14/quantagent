@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import type { TradeRecord } from '../types'
 import TradeLogTable from '../components/trades/TradeLogTable'
 import BotSelector from '../components/bots/BotSelector'
+import { useGlobalFilter } from '../context/GlobalFilterContext'
 
 interface Props {
   refreshTick: number
@@ -15,17 +16,18 @@ export default function Trades({ refreshTick }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedRow, setExpandedRow] = useState<number | null>(null)
-  const [filters, setFilters] = useState({ symbol: '', direction: '', exit_type: '' })
+  const [filters, setFilters] = useState({ symbol: '', direction: '', exit_type: '', bot_name: '' })
   const [botId, setBotId] = useState<string | undefined>()
+  const { mode } = useGlobalFilter()
   const LIMIT = 50
 
   useEffect(() => {
     setLoading(true)
-    api.trades({ limit: LIMIT, offset: page * LIMIT, ...filters, botId })
+    api.trades({ limit: LIMIT, offset: page * LIMIT, ...filters, botId, mode })
       .then(res => { setTrades(res.trades); setTotal(res.total); setError(null) })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [refreshTick, page, filters, botId])
+  }, [refreshTick, page, filters, botId, mode])
 
   function updateFilter(f: Partial<typeof filters>) {
     setFilters(prev => ({ ...prev, ...f }))

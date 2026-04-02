@@ -9,13 +9,15 @@ import Breakdown from './pages/Breakdown'
 import Settings from './pages/Settings'
 import Bots from './pages/Bots'
 import BotDetail from './pages/BotDetail'
+import { GlobalFilterProvider, useGlobalFilter } from './context/GlobalFilterContext'
 
 const AUTO_REFRESH_MS = 30_000
 
-export default function App() {
+function AppInner() {
   const [refreshTick, setRefreshTick] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const { mode, setMode } = useGlobalFilter()
 
   const refresh = useCallback(() => {
     setRefreshing(true)
@@ -37,7 +39,13 @@ export default function App() {
     <div className="flex h-screen bg-bg-main text-text-primary overflow-hidden">
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0">
-        <Header lastRefresh={lastRefresh} onRefresh={refresh} refreshing={refreshing} />
+        <Header
+          lastRefresh={lastRefresh}
+          onRefresh={refresh}
+          refreshing={refreshing}
+          mode={mode}
+          setMode={setMode}
+        />
         <main className="flex-1 overflow-y-auto p-6">
           <Routes>
             <Route path="/bots" element={<Bots refreshTick={refreshTick} />} />
@@ -51,5 +59,13 @@ export default function App() {
         </main>
       </div>
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <GlobalFilterProvider>
+      <AppInner />
+    </GlobalFilterProvider>
   )
 }

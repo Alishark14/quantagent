@@ -1,6 +1,7 @@
 """Fetch OHLC data via CCXT (default: Bybit public endpoints)."""
 
 import logging
+import requests
 import ccxt
 from config import Config
 
@@ -71,6 +72,49 @@ def fetch_ohlc(
 
     logger.info(f"Fetched {len(candles)} candles. Latest close: {candles[-1]['close']}")
     return candles
+
+
+def fetch_dydx_balance(address: str, testnet: bool = True) -> float:
+    """Fetch free USDC collateral directly from the dYdX v4 indexer.
+
+    CCXT's fetch_balance() for dYdX returns free=20000 but total=None (CCXT
+    parsing bug — only 'free' is populated from assetPositions). Querying the
+    indexer directly avoids this and is always up to date.
+    """
+    base = (
+        "https://indexer.v4testnet.dydx.exchange"
+        if testnet
+        else "https://indexer.dydx.trade"
+    )
+    url = f"{base}/v4/addresses/{address}/subaccountNumber/0"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        # API returns {"subaccount": {...}} (singular object)
+        sub = data.get("subaccount") or data.get("subaccounts", [data])[0]
+        return float(sub.get("freeCollateral", sub.get("equity", 0)))
+    except Exception as e:
+        logger.error(f"Failed to fetch dYdX balance: {e}")
+        return 0.0
+
+
+def get_current_price(symbol: str, exchange: ccxt.Exchange | None = None) -> float:
+    """Get the current price for a symbol, compatible with all exchanges.
+
+    Uses fetch_ticker() if supported, falls back to the last close of the
+    most recent 1-minute OHLCV candle (required for dYdX v4 which does not
+    implement fetchTicker).
+    """
+    if exchange is None:
+        from execution import get_exchange_client
+        exchange = get_exchange_client()
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        return float(ticker["last"])
+    except Exception:
+        ohlcv = exchange.fetch_ohlcv(symbol, "1m", limit=1)
+        return float(ohlcv[-1][4])
 
 
 def fetch_data_node(state: dict) -> dict:

@@ -23,11 +23,15 @@ def load_trades() -> list[dict]:
     with open(TRADE_LOG_PATH) as f:
         for line in f:
             line = line.strip()
-            if line:
-                try:
-                    trades.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+                # Skip flat-format records (old _log_skipped_signal writes) that lack a "trade" key
+                if "trade" in record:
+                    trades.append(record)
+            except json.JSONDecodeError:
+                continue
     return trades
 
 
@@ -232,6 +236,10 @@ def compute_breakdown(enriched: list[dict], dimension: str) -> list[dict]:
             key = m.group(1) if m else "unknown"
         elif dimension == "direction":
             key = t["trade"].get("direction", "unknown")
+        elif dimension == "exchange":
+            key = t["trade"].get("exchange", "unknown")
+        elif dimension == "bot":
+            key = t.get("bot_name", "manual")
         else:
             key = "unknown"
         groups.setdefault(key, []).append(t)

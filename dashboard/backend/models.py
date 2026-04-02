@@ -43,6 +43,12 @@ class TradeRecord(BaseModel):
     status: str
     estimated: bool
     agreement_level: str
+    bot_name: str = "unknown"
+    bot_id: str = ""
+    position_size_usd: float = 0.0
+    quantity: float = 0.0
+    trading_mode: str = "paper"
+    exchange: str = ""
 
 
 class TradesResponse(BaseModel):
@@ -121,8 +127,8 @@ class BotCreate(BaseModel):
     forecast_candles: int = 3
     agents_enabled: str = "indicator,pattern,trend"
     llm_model: str = "claude-sonnet-4-20250514"
-    exchange: str = "deribit"
-    exchange_testnet: int = 1
+    exchange: str = "dydx"
+    exchange_testnet: int = 1  # auto-set by create endpoint: 1 if paper, 0 if live
 
 
 class BotUpdate(BaseModel):

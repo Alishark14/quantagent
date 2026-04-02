@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
-import { ArrowLeft, Edit2, Play, PauseCircle, Square, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { useParams, Link } from 'react-router-dom'
+import { ArrowLeft, Edit2, Play, PauseCircle, Square, RefreshCw, Circle } from 'lucide-react'
 import { api } from '../api/client'
 import type { AgentsData, Bot, TradeRecord } from '../types'
 import EquityCurve from '../components/overview/EquityCurve'
@@ -25,9 +25,20 @@ const STATUS_COLOR: Record<string, string> = {
   error: 'text-[#ef4444]',
 }
 
+type Tab = 'log' | 'trades' | 'perf'
+
+// ── Log line color coding ─────────────────────────────────────────────────────
+
+function logLineClass(line: string): string {
+  if (/ERROR/.test(line)) return 'text-[#ef4444]'
+  if (/WARNING|WARN/.test(line)) return 'text-[#eab308]'
+  if (/SIGNAL:|Decision:|LONG|SHORT/.test(line)) return 'text-[#22c55e]'
+  if (/[═─╔║╚╝╠╣]/.test(line)) return 'text-[#06b6d4]'
+  return 'text-[#9ca3af]'
+}
+
 export default function BotDetail({ refreshTick }: Props) {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
 
   const [bot, setBot] = useState<Bot | null>(null)
   const [trades, setTrades] = useState<TradeRecord[]>([])
@@ -37,7 +48,15 @@ export default function BotDetail({ refreshTick }: Props) {
   const [actionLoading, setActionLoading] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [page, setPage] = useState(0)
+  const [activeTab, setActiveTab] = useState<Tab>('log')
   const LIMIT = 50
+
+  // ── Live log state ──────────────────────────────────────────────────────────
+  const [logLines, setLogLines] = useState<string[]>([])
+  const [wsConnected, setWsConnected] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const logEndRef = useRef<HTMLDivElement>(null)
+  const wsRef = useRef<WebSocket | null>(null)
 
   async function fetchAll() {
     if (!id) return
@@ -62,6 +81,41 @@ export default function BotDetail({ refreshTick }: Props) {
     setLoading(true)
     fetchAll()
   }, [refreshTick, id, page])
+
+  // ── WebSocket connection (only when log tab is active) ──────────────────────
+  useEffect(() => {
+    if (activeTab !== 'log' || !id) return
+
+    const ws = new WebSocket(`ws://localhost:8001/ws/bots/${id}/logs`)
+    wsRef.current = ws
+
+    ws.onopen = () => setWsConnected(true)
+    ws.onclose = () => setWsConnected(false)
+    ws.onerror = () => setWsConnected(false)
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data)
+        if (msg.type === 'log' && msg.data) {
+          setLogLines(prev => [...prev, msg.data])
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    return () => {
+      ws.close()
+      wsRef.current = null
+      setWsConnected(false)
+    }
+  }, [activeTab, id])
+
+  // ── Auto-scroll log to bottom ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!paused && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [logLines, paused])
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -111,6 +165,12 @@ export default function BotDetail({ refreshTick }: Props) {
   const canStart = bot.status === 'stopped' || bot.status === 'paused' || bot.status === 'error'
   const canPause = bot.status === 'running'
   const canStop = bot.status === 'running' || bot.status === 'paused'
+
+  const TABS: { key: Tab; label: string }[] = [
+    { key: 'log', label: 'Live Log' },
+    { key: 'trades', label: 'Trades' },
+    { key: 'perf', label: 'Performance' },
+  ]
 
   return (
     <div className="space-y-6">
@@ -220,48 +280,126 @@ export default function BotDetail({ refreshTick }: Props) {
         )}
       </div>
 
-      {/* Equity curve */}
-      {equityCurve.length > 0 && (
-        <div>
-          <h2 className="text-text-primary font-semibold text-sm mb-3">Equity Curve</h2>
-          <EquityCurve data={equityCurve} />
-        </div>
-      )}
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-border">
+        {TABS.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === tab.key
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      {/* Agent accuracy */}
-      {agentData && Object.keys(agentData.agents).length > 0 && (
-        <div>
-          <h2 className="text-text-primary font-semibold text-sm mb-3">Agent Performance</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {Object.entries(agentData.agents).map(([key, stat]) => (
-              <AgentAccuracy key={key} name={AGENT_NAMES[key] ?? key} stat={stat} />
-            ))}
+      {/* Tab: Live Log */}
+      {activeTab === 'log' && (
+        <div className="space-y-3">
+          {/* Log controls */}
+          <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-1.5">
+              <Circle
+                size={8}
+                className={wsConnected ? 'fill-[#22c55e] text-[#22c55e]' : 'fill-[#ef4444] text-[#ef4444]'}
+              />
+              <span className="text-text-muted">{wsConnected ? 'Connected' : 'Disconnected'}</span>
+            </div>
+            <button
+              onClick={() => setLogLines([])}
+              className="px-2 py-1 bg-bg-elevated border border-border rounded text-text-secondary hover:text-text-primary transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => setPaused(p => !p)}
+              className={`px-2 py-1 border rounded transition-colors ${
+                paused
+                  ? 'bg-[#eab308]/15 border-[#eab308]/30 text-[#eab308]'
+                  : 'bg-bg-elevated border-border text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {paused ? 'Resume' : 'Pause'}
+            </button>
+            <span className="text-text-muted ml-auto">{logLines.length} lines</span>
+          </div>
+
+          {/* Terminal */}
+          <div
+            className="bg-[#0d1117] border border-[#2d3039] rounded-lg p-4 h-[500px] overflow-y-auto"
+            style={{ fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace" }}
+          >
+            {logLines.length === 0 ? (
+              <p className="text-[#4b5563] text-xs">
+                {wsConnected ? 'Waiting for log output…' : 'No log file found. Start the bot to begin streaming.'}
+              </p>
+            ) : (
+              logLines.map((line, i) => (
+                <div key={i} className={`text-xs leading-5 whitespace-pre-wrap break-all ${logLineClass(line)}`}>
+                  {line}
+                </div>
+              ))
+            )}
+            <div ref={logEndRef} />
           </div>
         </div>
       )}
 
-      {/* Trade log */}
-      <div>
-        <h2 className="text-text-primary font-semibold text-sm mb-3">
-          Trade History
-          <span className="text-text-muted font-normal ml-2 text-xs">{trades.length} records</span>
-        </h2>
-        {trades.length === 0 ? (
-          <p className="text-text-muted text-sm py-8 text-center">No trades yet for this bot</p>
-        ) : (
-          <TradeLogTable
-            trades={trades}
-            total={trades.length}
-            page={page}
-            onPageChange={setPage}
-            limit={LIMIT}
-            filters={{ symbol: '', direction: '', exit_type: '' }}
-            onFilterChange={() => {}}
-            expandedRow={null}
-            onExpandRow={() => {}}
-          />
-        )}
-      </div>
+      {/* Tab: Trades */}
+      {activeTab === 'trades' && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-text-primary font-semibold text-sm">
+              Trade History
+              <span className="text-text-muted font-normal ml-2 text-xs">{trades.length} records</span>
+            </h2>
+          </div>
+          {trades.length === 0 ? (
+            <p className="text-text-muted text-sm py-8 text-center">No trades yet for this bot</p>
+          ) : (
+            <TradeLogTable
+              trades={trades}
+              total={trades.length}
+              page={page}
+              onPageChange={setPage}
+              limit={LIMIT}
+              filters={{ symbol: '', direction: '', exit_type: '', bot_name: '' }}
+              onFilterChange={() => {}}
+              expandedRow={null}
+              onExpandRow={() => {}}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Tab: Performance */}
+      {activeTab === 'perf' && (
+        <div className="space-y-6">
+          {equityCurve.length > 0 ? (
+            <div>
+              <h2 className="text-text-primary font-semibold text-sm mb-3">Equity Curve</h2>
+              <EquityCurve data={equityCurve} />
+            </div>
+          ) : (
+            <p className="text-text-muted text-sm py-4">No trade data for equity curve.</p>
+          )}
+
+          {agentData && Object.keys(agentData.agents).length > 0 && (
+            <div>
+              <h2 className="text-text-primary font-semibold text-sm mb-3">Agent Performance</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {Object.entries(agentData.agents).map(([key, stat]) => (
+                  <AgentAccuracy key={key} name={AGENT_NAMES[key] ?? key} stat={stat} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Edit modal */}
       {editOpen && (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, X } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Bot, BotCreate } from '../../types'
 
@@ -17,18 +17,18 @@ const DEFAULTS: FormData = {
   market_type: 'perpetual',
   timeframe: '1h',
   budget_usd: 500,
-  max_concurrent_positions: 3,
+  max_concurrent_positions: 1,
   trading_mode: 'paper',
   atr_multiplier: 1.5,
   atr_length: 14,
   rr_ratio_min: 1.2,
   rr_ratio_max: 1.8,
   max_daily_loss_usd: 100,
-  max_position_pct: 0.5,
+  max_position_pct: 1.0,
   forecast_candles: 3,
   agents_enabled: 'indicator,pattern,trend',
   llm_model: 'claude-sonnet-4-20250514',
-  exchange: 'deribit',
+  exchange: 'dydx',
   exchange_testnet: 1,
 }
 
@@ -222,6 +222,7 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
   const [customSymbol, setCustomSymbol] = useState(
     !['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].includes(form.symbol)
   )
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   // Keep agents_enabled in sync with checkboxes
   useEffect(() => {
@@ -362,16 +363,6 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                 />
               </div>
               <div>
-                <Label>Max concurrent positions</Label>
-                <Input
-                  type="number"
-                  value={form.max_concurrent_positions}
-                  onChange={v => set('max_concurrent_positions', Number(v))}
-                  min={1}
-                  max={5}
-                />
-              </div>
-              <div>
                 <Label>Budget (USD)</Label>
                 <Input
                   type="number"
@@ -382,20 +373,20 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                 />
                 <ErrMsg msg={errors.budget_usd} />
               </div>
-              <div>
+              <div className="col-span-2">
                 <Label>Mode</Label>
                 <div className="flex flex-col gap-1">
                   <Toggle
                     value={form.trading_mode === 'live'}
                     onChange={v => set('trading_mode', v ? 'live' : 'paper')}
-                    labelOff="Paper"
-                    labelOn="Live"
+                    labelOff="Paper — trades on testnet with fake money"
+                    labelOn="Live — uses real USDC on mainnet"
                     colorOn="bg-[#f97316]"
                   />
                   {form.trading_mode === 'live' && (
-                    <div className="flex items-center gap-1 text-[#f97316] text-xs">
+                    <div className="flex items-center gap-1 text-[#f97316] text-xs mt-1">
                       <AlertTriangle size={11} />
-                      Uses real money!
+                      Real money will be used on mainnet!
                     </div>
                   )}
                 </div>
@@ -403,131 +394,9 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
             </div>
           </div>
 
-          {/* RISK */}
+          {/* CONFIGURATION */}
           <div>
-            <SectionHeader>Risk</SectionHeader>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <SliderRow
-                  label="ATR multiplier"
-                  value={form.atr_multiplier}
-                  min={0.5}
-                  max={3.0}
-                  step={0.1}
-                  onChange={v => set('atr_multiplier', v)}
-                  format={v => v.toFixed(1)}
-                />
-              </div>
-              <div>
-                <Label>ATR length</Label>
-                <Input
-                  type="number"
-                  value={form.atr_length}
-                  onChange={v => set('atr_length', Number(v))}
-                  min={7}
-                  max={50}
-                />
-              </div>
-              <div>
-                <Label>Forecast candles</Label>
-                <Input
-                  type="number"
-                  value={form.forecast_candles}
-                  onChange={v => set('forecast_candles', Number(v))}
-                  min={1}
-                  max={10}
-                />
-              </div>
-              <div>
-                <Label>RR ratio min</Label>
-                <Input
-                  type="number"
-                  value={form.rr_ratio_min}
-                  onChange={v => set('rr_ratio_min', Number(v))}
-                  step={0.1}
-                  min={0.5}
-                />
-                <ErrMsg msg={errors.rr_ratio_min} />
-              </div>
-              <div>
-                <Label>RR ratio max</Label>
-                <Input
-                  type="number"
-                  value={form.rr_ratio_max}
-                  onChange={v => set('rr_ratio_max', Number(v))}
-                  step={0.1}
-                  min={0.5}
-                />
-              </div>
-              <div>
-                <Label>Max daily loss (USD)</Label>
-                <Input
-                  type="number"
-                  value={form.max_daily_loss_usd}
-                  onChange={v => set('max_daily_loss_usd', Number(v))}
-                  min={10}
-                  step={10}
-                />
-                <ErrMsg msg={errors.max_daily_loss_usd} />
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <Label>Max position %</Label>
-                  <span className="text-xs font-mono text-accent">
-                    {(form.max_position_pct * 100).toFixed(0)}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={0.1}
-                  max={0.5}
-                  step={0.05}
-                  value={form.max_position_pct}
-                  onChange={e => set('max_position_pct', Number(e.target.value))}
-                  className="w-full accent-accent"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* STRATEGY */}
-          <div>
-            <SectionHeader>Strategy</SectionHeader>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Agents enabled</Label>
-                <div className="flex flex-col gap-1.5 mt-1">
-                  {(['indicator', 'pattern', 'trend'] as const).map(a => (
-                    <label key={a} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={agents[a]}
-                        onChange={e => setAgents(ag => ({ ...ag, [a]: e.target.checked }))}
-                        className="accent-accent"
-                      />
-                      <span className="text-sm text-text-secondary capitalize">{a}</span>
-                    </label>
-                  ))}
-                </div>
-                <ErrMsg msg={errors.agents_enabled} />
-              </div>
-              <div>
-                <Label>LLM model</Label>
-                <Select
-                  value={form.llm_model}
-                  onChange={v => set('llm_model', v)}
-                  options={[
-                    { value: 'claude-sonnet-4-20250514', label: 'Sonnet 4' },
-                    { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-                  ]}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* EXCHANGE */}
-          <div>
-            <SectionHeader>Exchange</SectionHeader>
+            <SectionHeader>Configuration</SectionHeader>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Exchange</Label>
@@ -535,31 +404,151 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                   value={form.exchange}
                   onChange={v => set('exchange', v)}
                   options={[
-                    { value: 'deribit', label: 'Deribit' },
                     { value: 'dydx', label: 'dYdX' },
-                    { value: 'kraken', label: 'Kraken' },
+                    { value: 'hyperliquid', label: 'Hyperliquid' },
+                    { value: 'deribit', label: 'Deribit' },
                   ]}
                 />
               </div>
               <div>
-                <Label>Testnet mode</Label>
-                <div className="flex flex-col gap-1">
-                  <Toggle
-                    value={form.exchange_testnet === 1}
-                    onChange={v => set('exchange_testnet', v ? 1 : 0)}
-                    labelOff="Mainnet"
-                    labelOn="Testnet"
-                    colorOn="bg-accent"
-                  />
-                  {form.exchange_testnet === 0 && (
-                    <div className="flex items-center gap-1 text-[#ef4444] text-xs">
-                      <AlertTriangle size={11} />
-                      REAL MONEY — mainnet!
-                    </div>
-                  )}
-                </div>
+                <Label>LLM model</Label>
+                <Select
+                  value={form.llm_model}
+                  onChange={v => set('llm_model', v)}
+                  options={[
+                    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet' },
+                    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku' },
+                  ]}
+                />
               </div>
             </div>
+          </div>
+
+          {/* ADVANCED SETTINGS (collapsed by default) */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(v => !v)}
+              className="flex items-center gap-2 text-xs font-semibold text-text-muted uppercase tracking-widest py-2 border-b border-[#2d3039] w-full hover:text-text-secondary transition-colors"
+            >
+              <span className="flex-1 text-left">Advanced Settings</span>
+              {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+
+            {showAdvanced && (
+              <div className="mt-3 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <SliderRow
+                      label="ATR multiplier"
+                      value={form.atr_multiplier}
+                      min={0.5}
+                      max={3.0}
+                      step={0.1}
+                      onChange={v => set('atr_multiplier', v)}
+                      format={v => v.toFixed(1)}
+                    />
+                  </div>
+                  <div>
+                    <Label>ATR length</Label>
+                    <Input
+                      type="number"
+                      value={form.atr_length}
+                      onChange={v => set('atr_length', Number(v))}
+                      min={7}
+                      max={50}
+                    />
+                  </div>
+                  <div>
+                    <Label>Forecast candles</Label>
+                    <Input
+                      type="number"
+                      value={form.forecast_candles}
+                      onChange={v => set('forecast_candles', Number(v))}
+                      min={1}
+                      max={10}
+                    />
+                  </div>
+                  <div>
+                    <Label>RR ratio min</Label>
+                    <Input
+                      type="number"
+                      value={form.rr_ratio_min}
+                      onChange={v => set('rr_ratio_min', Number(v))}
+                      step={0.1}
+                      min={0.5}
+                    />
+                    <ErrMsg msg={errors.rr_ratio_min} />
+                  </div>
+                  <div>
+                    <Label>RR ratio max</Label>
+                    <Input
+                      type="number"
+                      value={form.rr_ratio_max}
+                      onChange={v => set('rr_ratio_max', Number(v))}
+                      step={0.1}
+                      min={0.5}
+                    />
+                  </div>
+                  <div>
+                    <Label>Max daily loss (USD)</Label>
+                    <Input
+                      type="number"
+                      value={form.max_daily_loss_usd}
+                      onChange={v => set('max_daily_loss_usd', Number(v))}
+                      min={10}
+                      step={10}
+                    />
+                    <ErrMsg msg={errors.max_daily_loss_usd} />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <Label>Max position %</Label>
+                      <span className="text-xs font-mono text-accent">
+                        {(form.max_position_pct * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={1.0}
+                      step={0.05}
+                      value={form.max_position_pct}
+                      onChange={e => set('max_position_pct', Number(e.target.value))}
+                      className="w-full accent-accent"
+                    />
+                  </div>
+                  <div>
+                    <Label>Max concurrent positions</Label>
+                    <Input
+                      type="number"
+                      value={form.max_concurrent_positions}
+                      onChange={v => set('max_concurrent_positions', Number(v))}
+                      min={1}
+                      max={5}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label>Agents enabled</Label>
+                  <div className="flex gap-4 mt-1">
+                    {(['indicator', 'pattern', 'trend'] as const).map(a => (
+                      <label key={a} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={agents[a]}
+                          onChange={e => setAgents(ag => ({ ...ag, [a]: e.target.checked }))}
+                          className="accent-accent"
+                        />
+                        <span className="text-sm text-text-secondary capitalize">{a}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <ErrMsg msg={errors.agents_enabled} />
+                </div>
+              </div>
+            )}
           </div>
 
           {apiError && (

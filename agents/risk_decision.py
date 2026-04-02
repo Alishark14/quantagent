@@ -4,7 +4,6 @@ with risk-reward parameters."""
 
 import json
 import logging
-import os
 
 from utils.llm import call_llm_text
 from utils.indicators import compute_atr
@@ -115,8 +114,21 @@ Based on the above, issue your trading decision now."""
     if not (Config.RR_RATIO_MIN <= rr <= Config.RR_RATIO_MAX):
         decision["risk_reward_ratio"] = max(Config.RR_RATIO_MIN, min(Config.RR_RATIO_MAX, rr))
 
-    # Compute position size using volatility + agent agreement
-    account_balance = float(os.getenv("ACCOUNT_BALANCE", "1000"))
+    # Compute position size using volatility + agent agreement.
+    # ACCOUNT_BALANCE is set by process_manager per-bot (from budget_usd).
+    # When ACCOUNT_BALANCE=0 (default), fetch real balance from the exchange.
+    _acct_val = Config.ACCOUNT_BALANCE  # already parsed as float by Config
+    if _acct_val > 0:
+        account_balance = _acct_val
+    elif Config.EXCHANGE.lower() == "dydx":
+        from utils.data import fetch_dydx_balance
+        account_balance = fetch_dydx_balance(Config.DYDX_ADDRESS, Config.EXCHANGE_TESTNET)
+        if account_balance == 0.0:
+            account_balance = 10000.0  # last resort default
+            logger.warning("Could not fetch dYdX balance; defaulting to $10,000")
+    else:
+        account_balance = 10000.0  # default for exchanges without balance fetch
+        logger.warning("ACCOUNT_BALANCE not set and not dYdX; defaulting to $10,000")
     sizing = calculate_position_size(
         account_balance=account_balance,
         num_symbols=Config.NUM_SYMBOLS,

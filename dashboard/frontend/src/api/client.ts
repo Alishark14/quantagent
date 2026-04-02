@@ -4,6 +4,7 @@ import type {
   BotCreate,
   BreakdownResponse,
   ConfigData,
+  ExchangeStatus,
   ExitsData,
   OverviewData,
   TradeRecord,
@@ -55,9 +56,12 @@ async function del<T>(path: string): Promise<T> {
 
 export const api = {
   // ── Performance analytics ──────────────────────────────────────────────────
-  overview: (botId?: string) => {
-    const q = botId ? `?bot_id=${botId}` : ''
-    return get<OverviewData>(`/api/overview${q}`)
+  overview: (botId?: string, mode?: string) => {
+    const q = new URLSearchParams()
+    if (botId) q.set('bot_id', botId)
+    if (mode && mode !== 'all') q.set('mode', mode)
+    const qs = q.toString()
+    return get<OverviewData>(`/api/overview${qs ? `?${qs}` : ''}`)
   },
 
   trades: (params?: {
@@ -66,7 +70,9 @@ export const api = {
     symbol?: string
     direction?: string
     exit_type?: string
+    bot_name?: string
     botId?: string
+    mode?: string
   }) => {
     const q = new URLSearchParams()
     if (params?.limit !== undefined) q.set('limit', String(params.limit))
@@ -74,29 +80,40 @@ export const api = {
     if (params?.symbol) q.set('symbol', params.symbol)
     if (params?.direction) q.set('direction', params.direction)
     if (params?.exit_type) q.set('exit_type', params.exit_type)
+    if (params?.bot_name) q.set('bot_name', params.bot_name)
     if (params?.botId) q.set('bot_id', params.botId)
+    if (params?.mode && params.mode !== 'all') q.set('mode', params.mode)
     return get<TradesResponse>(`/api/trades?${q}`)
   },
 
-  agents: (botId?: string) => {
-    const q = botId ? `?bot_id=${botId}` : ''
-    return get<AgentsData>(`/api/agents${q}`)
+  agents: (botId?: string, mode?: string) => {
+    const q = new URLSearchParams()
+    if (botId) q.set('bot_id', botId)
+    if (mode && mode !== 'all') q.set('mode', mode)
+    const qs = q.toString()
+    return get<AgentsData>(`/api/agents${qs ? `?${qs}` : ''}`)
   },
 
-  breakdown: (dimension: 'asset' | 'timeframe' | 'direction', botId?: string) => {
+  breakdown: (dimension: string, botId?: string, mode?: string) => {
     const q = new URLSearchParams({ dimension })
     if (botId) q.set('bot_id', botId)
+    if (mode && mode !== 'all') q.set('mode', mode)
     return get<BreakdownResponse>(`/api/breakdown?${q}`)
   },
 
-  exits: (botId?: string) => {
-    const q = botId ? `?bot_id=${botId}` : ''
-    return get<ExitsData>(`/api/exits${q}`)
+  exits: (botId?: string, mode?: string) => {
+    const q = new URLSearchParams()
+    if (botId) q.set('bot_id', botId)
+    if (mode && mode !== 'all') q.set('mode', mode)
+    const qs = q.toString()
+    return get<ExitsData>(`/api/exits${qs ? `?${qs}` : ''}`)
   },
 
   config: () => get<ConfigData>('/api/config'),
 
   health: () => get<{ status: string }>('/api/health'),
+
+  exchangeStatus: () => get<ExchangeStatus[]>('/api/settings/exchanges'),
 
   // ── Bot CRUD ───────────────────────────────────────────────────────────────
   getBots: () => get<Bot[]>('/api/bots'),
@@ -124,4 +141,14 @@ export const api = {
   // ── Bot trades ─────────────────────────────────────────────────────────────
   getBotTrades: (id: string, limit = 50, offset = 0) =>
     get<TradeRecord[]>(`/api/bots/${id}/trades?limit=${limit}&offset=${offset}`),
+
+  // ── Guardian ───────────────────────────────────────────────────────────────
+  guardianStatus: () =>
+    get<{ active: boolean; orphan_tracker: Record<string, string> }>('/api/guardian/status'),
+
+  // ── Emergency ──────────────────────────────────────────────────────────────
+  closeAllPositions: () =>
+    post<{ closed: number; failed: number; orders_cancelled: number }>(
+      '/api/emergency/close-all-positions'
+    ),
 }

@@ -5,6 +5,7 @@ import KPICards from '../components/overview/KPICards'
 import EquityCurve from '../components/overview/EquityCurve'
 import RecentTrades from '../components/overview/RecentTrades'
 import BotSelector from '../components/bots/BotSelector'
+import { useGlobalFilter } from '../context/GlobalFilterContext'
 
 interface Props {
   refreshTick: number
@@ -16,10 +17,14 @@ export default function Overview({ refreshTick }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [botId, setBotId] = useState<string | undefined>()
+  const { mode } = useGlobalFilter()
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([api.overview(botId), api.trades({ limit: 10, offset: 0, botId })])
+    Promise.all([
+      api.overview(botId, mode),
+      api.trades({ limit: 10, offset: 0, botId, mode }),
+    ])
       .then(([ov, tr]) => {
         setOverview(ov)
         setRecentTrades(tr.trades)
@@ -27,7 +32,7 @@ export default function Overview({ refreshTick }: Props) {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [refreshTick, botId])
+  }, [refreshTick, botId, mode])
 
   if (loading) {
     return (
@@ -52,10 +57,7 @@ export default function Overview({ refreshTick }: Props) {
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-text-primary text-lg font-semibold">Overview</h1>
-          <p className="text-text-muted text-xs mt-0.5">P&amp;L values are estimated (55% TP assumption) until Deribit outcome tracker is live</p>
-        </div>
+        <h1 className="text-text-primary text-lg font-semibold">Overview</h1>
         <BotSelector value={botId} onChange={setBotId} />
       </div>
       <KPICards data={overview} />

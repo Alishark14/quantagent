@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useReactTable,
   getCoreRowModel,
@@ -16,13 +16,43 @@ interface Props {
   page: number
   onPageChange: (p: number) => void
   limit: number
-  filters: { symbol: string; direction: string; exit_type: string }
-  onFilterChange: (f: Partial<{ symbol: string; direction: string; exit_type: string }>) => void
+  filters: { symbol: string; direction: string; exit_type: string; bot_name: string }
+  onFilterChange: (f: Partial<{ symbol: string; direction: string; exit_type: string; bot_name: string }>) => void
   expandedRow: number | null
   onExpandRow: (i: number | null) => void
 }
 
 const helper = createColumnHelper<TradeRecord>()
+
+const BOT_COLOR_PALETTE = [
+  'bg-blue-500/20 text-blue-400',
+  'bg-purple-500/20 text-purple-400',
+  'bg-cyan-500/20 text-cyan-400',
+  'bg-orange-500/20 text-orange-400',
+  'bg-pink-500/20 text-pink-400',
+  'bg-teal-500/20 text-teal-400',
+  'bg-indigo-500/20 text-indigo-400',
+  'bg-amber-500/20 text-amber-400',
+]
+
+function botColor(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) & 0xffffffff
+  }
+  return BOT_COLOR_PALETTE[Math.abs(hash) % BOT_COLOR_PALETTE.length]
+}
+
+function BotBadge({ name }: { name: string }) {
+  if (!name || name === 'unknown') {
+    return <span className="text-text-muted text-xs">—</span>
+  }
+  return (
+    <span className={`px-1.5 py-0.5 rounded text-xs font-medium truncate max-w-[100px] inline-block ${botColor(name)}`}>
+      {name}
+    </span>
+  )
+}
 
 function PnlCell({ value }: { value: number }) {
   return (
@@ -43,9 +73,9 @@ function ExitBadge({ type }: { type: string }) {
 }
 
 function exportCSV(trades: TradeRecord[]) {
-  const headers = ['timestamp','symbol','direction','entry_price','stop_loss','take_profit','pnl','pnl_pct','exit_type','rr_ratio','atr_value','agreement_level']
+  const headers = ['bot_name','timestamp','symbol','direction','entry_price','stop_loss','take_profit','pnl','pnl_pct','exit_type','rr_ratio','atr_value','agreement_level']
   const rows = trades.map(t =>
-    [t.timestamp, t.symbol, t.direction, t.entry_price, t.stop_loss, t.take_profit, t.pnl, t.pnl_pct, t.exit_type, t.rr_ratio, t.atr_value ?? '', t.agreement_level].join(',')
+    [t.bot_name, t.timestamp, t.symbol, t.direction, t.entry_price, t.stop_loss, t.take_profit, t.pnl, t.pnl_pct, t.exit_type, t.rr_ratio, t.atr_value ?? '', t.agreement_level].join(',')
   )
   const csv = [headers.join(','), ...rows].join('\n')
   const blob = new Blob([csv], { type: 'text/csv' })
@@ -58,6 +88,10 @@ function exportCSV(trades: TradeRecord[]) {
 }
 
 const COLUMNS = [
+  helper.accessor('bot_name', {
+    header: 'Bot',
+    cell: i => <BotBadge name={i.getValue()} />,
+  }),
   helper.accessor('timestamp', {
     header: 'Date / Time',
     cell: i => <span className="font-mono text-xs text-text-muted tabular-nums whitespace-nowrap">{new Date(i.getValue()).toLocaleString()}</span>,
@@ -73,6 +107,27 @@ const COLUMNS = [
         {i.getValue()}
       </span>
     ),
+  }),
+  helper.display({
+    id: 'size',
+    header: 'Size',
+    cell: ({ row }) => {
+      const t = row.original
+      const usd = t.position_size_usd ?? 0
+      const qty = t.quantity ?? 0
+      const sym = (t.symbol ?? '').replace('USDT', '').replace('USDC', '')
+      if (usd === 0) return <span className="text-text-muted text-xs">—</span>
+      return (
+        <div>
+          <div className="font-mono tabular-nums text-xs">${usd.toFixed(2)}</div>
+          {qty > 0 && (
+            <div className="font-mono tabular-nums text-[10px] text-text-muted">
+              {qty.toFixed(4)} {sym}
+            </div>
+          )}
+        </div>
+      )
+    },
   }),
   helper.accessor('entry_price', {
     header: 'Entry',
@@ -118,6 +173,11 @@ export default function TradeLogTable({
 }: Props) {
   const [sorting, setSorting] = useState<SortingState>([])
 
+  const uniqueBotNames = useMemo(() => {
+    const names = new Set(trades.map(t => t.bot_name).filter(n => n && n !== 'unknown'))
+    return Array.from(names).sort()
+  }, [trades])
+
   const table = useReactTable({
     data: trades,
     columns: COLUMNS,
@@ -135,7 +195,17 @@ export default function TradeLogTable({
     <div className="space-y-4">
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center justify-between">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={filters.bot_name}
+            onChange={e => onFilterChange({ bot_name: e.target.value })}
+            className="bg-bg-elevated border border-border text-text-secondary text-xs rounded-md px-3 py-1.5 focus:outline-none focus:border-accent"
+          >
+            <option value="">All Bots</option>
+            {uniqueBotNames.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
           <select
             value={filters.direction}
             onChange={e => onFilterChange({ direction: e.target.value })}

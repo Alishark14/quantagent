@@ -4,6 +4,8 @@ import logging
 import os
 import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -48,18 +50,25 @@ def start_bot(bot_config: dict) -> int:
         "FORECAST_CANDLES": str(bot_config["forecast_candles"]),
         "LLM_MODEL": bot_config["llm_model"],
         "EXCHANGE": bot_config["exchange"],
-        "EXCHANGE_TESTNET": str(bot_config["exchange_testnet"]),
+        "EXCHANGE_TESTNET": "true" if bot_config.get("exchange_testnet", 1) else "false",
         "AGENTS_ENABLED": bot_config["agents_enabled"],
+        "MAX_POSITION_PCT": str(bot_config.get("max_position_pct", 0.5)),
+        "MIN_POSITION_USD": str(bot_config.get("min_position_usd", 20)),
+        "NUM_SYMBOLS": "1",  # each bot process manages exactly one symbol
         "LANGCHAIN_PROJECT": f"quantagent-{bot_config['trading_mode']}-{bot_config['symbol'].lower()}",
     })
 
+    # Log which credential keys are being passed (never log values)
+    cred_keys = [k for k in env if any(tok in k for tok in ("KEY", "MNEMONIC", "ADDRESS", "SECRET"))]
+    logger.info(f"Bot env credential keys present: {cred_keys}")
+
     cmd = [
-        "python", str(PROJECT_ROOT / "main.py"),
-        "--symbols", bot_config["symbol"],
+        sys.executable, str(PROJECT_ROOT / "main.py"),
+        "--symbol", bot_config["symbol"],
         "--timeframe", bot_config["timeframe"],
+        # NOTE: paper mode trades on TESTNET (controlled by EXCHANGE_TESTNET env var).
+        # --dry-run is for CLI analysis-only mode only; NEVER passed by the dashboard.
     ]
-    if bot_config["trading_mode"] == "paper":
-        cmd.append("--dry-run")
 
     log_dir = PROJECT_ROOT / "trade_logs" / bot_config["trading_mode"] / bot_config["symbol"].lower()
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -75,6 +84,24 @@ def start_bot(bot_config: dict) -> int:
 
     _processes[bot_id] = process
     logger.info(f"Started bot {bot_config['name']} ({bot_id}) with PID {process.pid}")
+
+    # Check that the process didn't die immediately (import error, missing dep, etc.)
+    time.sleep(2)
+    if process.poll() is not None:
+        del _processes[bot_id]
+        # Read whatever was logged
+        log_path = log_dir / "bot.log"
+        tail = ""
+        try:
+            with open(log_path) as lf:
+                tail = "".join(lf.readlines()[-20:])
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Bot process exited immediately (code {process.returncode}). "
+            f"Check {log_path}. Last output:\n{tail}"
+        )
+
     return process.pid
 
 

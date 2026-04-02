@@ -2,6 +2,7 @@ import type { OverviewData } from '../../types'
 
 interface Props {
   data: OverviewData
+  dailyApiCost?: number
 }
 
 function Card({
@@ -31,15 +32,20 @@ function Card({
   )
 }
 
-export default function KPICards({ data }: Props) {
+export default function KPICards({ data, dailyApiCost = 0 }: Props) {
   const pnlPositive = data.total_pnl > 0 ? true : data.total_pnl < 0 ? false : null
+  const dailyPnl = data.daily_pnl ?? 0
+  const dailyPositive = dailyPnl > 0 ? true : dailyPnl < 0 ? false : null
+  const openTrades = data.open_trades ?? 0
+  const netPnl = dailyPnl - dailyApiCost
+  const netPositive = netPnl > 0 ? true : netPnl < 0 ? false : null
 
   return (
-    <div className="grid grid-cols-3 xl:grid-cols-6 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-4">
       <Card
         label="Total Trades"
         value={String(data.total_trades)}
-        sub={`Today: ${data.trades_today}`}
+        sub={`Today: ${data.trades_today}${openTrades > 0 ? ` · ${openTrades} open` : ''}`}
       />
       <Card
         label="Win Rate"
@@ -50,18 +56,24 @@ export default function KPICards({ data }: Props) {
       <Card
         label="Total P&L"
         value={`${data.total_pnl >= 0 ? '+' : ''}${data.total_pnl.toFixed(2)}`}
-        sub="estimated"
+        sub="realized"
         positive={pnlPositive}
       />
       <Card
-        label="Profit Factor"
-        value={data.profit_factor === 0 ? 'N/A' : data.profit_factor.toFixed(2)}
-        positive={data.profit_factor > 1 ? true : data.profit_factor < 1 ? false : null}
+        label="Daily P&L"
+        value={`${dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}`}
+        positive={dailyPositive}
       />
       <Card
-        label="Max Drawdown"
-        value={data.max_drawdown.toFixed(2)}
-        positive={data.max_drawdown === 0 ? null : false}
+        label="Daily API Cost"
+        value={`$${dailyApiCost.toFixed(3)}`}
+        positive={null}
+      />
+      <Card
+        label="Net P&L"
+        value={`${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(2)}`}
+        sub="P&L minus API cost"
+        positive={netPositive}
       />
       <Card
         label="Sharpe Ratio"

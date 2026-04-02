@@ -10,10 +10,10 @@ Usage:
     python main.py --once --exchange dydx
 
     # Specific symbol, timeframe, budget
-    python main.py --once --symbol ETHUSDT --timeframe 15m --budget 500
+    python main.py --once --symbol ETH-USDC --timeframe 15m --budget 500
 
     # Multiple symbols
-    python main.py --symbol BTCUSDT ETHUSDT
+    python main.py --symbol BTC-USDC ETH-USDC
 
     # Scheduled (runs every candle on close)
     python main.py --exchange dydx --timeframe 1h
@@ -36,6 +36,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 from config import Config
 from graph import run_analysis
+from version import __version_full__, __phase__, MODEL_COSTS
 
 # Logging setup
 logging.basicConfig(
@@ -88,16 +89,54 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
                 "Trend":     result.get("trend_usage", {}),
                 "Decision":  result.get("decision_usage", {}),
             }
+            rates = MODEL_COSTS.get(Config.LLM_MODEL, {"input": 3.0, "output": 15.0})
+            input_rate = rates["input"] / 1_000_000
+            output_rate = rates["output"] / 1_000_000
             total_in = total_out = 0
             cost_lines = []
+            agent_cost_breakdown: dict[str, dict] = {}
             for agent_name, u in agent_usages.items():
-                inp = u.get("input_tokens", 0)
-                out = u.get("output_tokens", 0)
-                cost = (inp * 3 / 1_000_000) + (out * 15 / 1_000_000)
+                inp = u.get("input_tokens", 0) or 0
+                out = u.get("output_tokens", 0) or 0
+                cost = inp * input_rate + out * output_rate
                 total_in += inp
                 total_out += out
                 cost_lines.append(f"  {agent_name:<10} in={inp:>5}  out={out:>4}  ${cost:.4f}")
-            total_cost = (total_in * 3 / 1_000_000) + (total_out * 15 / 1_000_000)
+                agent_cost_breakdown[agent_name.lower()] = {
+                    "input_tokens": inp,
+                    "output_tokens": out,
+                    "cost": round(cost, 6),
+                }
+            total_cost = total_in * input_rate + total_out * output_rate
+
+            # Log costs to dashboard API if running as a managed bot
+            _bot_id_env = os.getenv("BOT_ID")
+            if _bot_id_env:
+                try:
+                    import requests as _req
+                    cost_payload: dict = {
+                        "bot_id": _bot_id_env,
+                        "bot_name": os.getenv("BOT_NAME", "manual"),
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "trading_mode": Config.TRADING_MODE,
+                        "model": Config.LLM_MODEL,
+                        "had_trade": result.get("trade_result", {}).get("status") == "executed",
+                        "total_input_tokens": total_in,
+                        "total_output_tokens": total_out,
+                        "total_cost": round(total_cost, 6),
+                    }
+                    for agent_key, breakdown in agent_cost_breakdown.items():
+                        cost_payload[f"{agent_key}_input_tokens"] = breakdown["input_tokens"]
+                        cost_payload[f"{agent_key}_output_tokens"] = breakdown["output_tokens"]
+                        cost_payload[f"{agent_key}_cost"] = breakdown["cost"]
+                    _req.post(
+                        "http://localhost:8001/api/internal/cycle-cost",
+                        json=cost_payload,
+                        timeout=5,
+                    )
+                except Exception:
+                    pass
 
             print(f"\n{'─'*50}")
             print(f"  {symbol} / {timeframe}")
@@ -121,7 +160,7 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
             else:
                 print(f"  Trade:     {trade_status}")
             print(f"{'─'*50}")
-            print(f"  Token usage (Sonnet $3/$15 per 1M):")
+            print(f"  Token usage ({Config.LLM_MODEL}):")
             for line in cost_lines:
                 print(line)
             print(f"  {'TOTAL':<10} in={total_in:>5}  out={total_out:>4}  ${total_cost:.4f}")
@@ -140,7 +179,7 @@ def main():
 
     # Symbol / timeframe
     parser.add_argument("--symbol", "--symbols", nargs="+", dest="symbols",
-                        default=None, help="Trading symbol(s), e.g. BTCUSDT ETHUSDT")
+                        default=None, help="Trading symbol(s), e.g. BTC-USDC ETH-USDC GOLD-USDC")
     parser.add_argument("--timeframe", default=None,
                         help="Candle interval: 1m 5m 15m 30m 1h 4h (default: 1h)")
 
@@ -207,8 +246,8 @@ def main():
 
     print(f"""
 ╔══════════════════════════════════════════╗
-║          QuantAgent v1.0                 ║
-║   Multi-Agent LLM Trading System         ║
+║  QuantAgent {__version_full__:<29}║
+║  Phase: {__phase__:<33}║
 ╠══════════════════════════════════════════╣
 ║  Symbols:    {', '.join(symbols):<27}║
 ║  Timeframe:  {timeframe:<27}║

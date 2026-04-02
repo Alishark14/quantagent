@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { Bot, ConfigData, ExchangeStatus } from '../types'
-import { ExternalLink, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
+import type { ApiCostData, Bot, ConfigData, ExchangeStatus, HealthData } from '../types'
+import { ExternalLink, CheckCircle2, XCircle } from 'lucide-react'
 
 interface Props {
   refreshTick: number
@@ -17,6 +17,13 @@ const EXCHANGE_LABELS: Record<string, string> = {
   dydx: 'dYdX v4',
   hyperliquid: 'Hyperliquid',
   deribit: 'Deribit',
+}
+
+const AGENT_COLORS: Record<string, string> = {
+  indicator: 'bg-blue-500',
+  pattern: 'bg-purple-500',
+  trend: 'bg-cyan-500',
+  decision: 'bg-amber-500',
 }
 
 function StatusDot({ status }: { status: ExchangeStatus['status'] }) {
@@ -77,6 +84,8 @@ export default function Settings({ refreshTick }: Props) {
   const [exLoading, setExLoading] = useState(true)
   const [config, setConfig] = useState<ConfigData | null>(null)
   const [bots, setBots] = useState<Bot[]>([])
+  const [healthData, setHealthData] = useState<HealthData | null>(null)
+  const [costData, setCostData] = useState<ApiCostData | null>(null)
 
   useEffect(() => {
     setExLoading(true)
@@ -84,14 +93,19 @@ export default function Settings({ refreshTick }: Props) {
       api.exchangeStatus().catch(() => [] as ExchangeStatus[]),
       api.config().catch(() => null),
       api.getBots().catch(() => [] as Bot[]),
-    ]).then(([ex, cfg, bs]) => {
+      api.health().catch(() => null),
+      api.apiCosts().catch(() => null),
+    ]).then(([ex, cfg, bs, health, costs]) => {
       setExchanges(ex)
       setConfig(cfg)
       setBots(bs)
+      setHealthData(health)
+      setCostData(costs)
     }).finally(() => setExLoading(false))
   }, [refreshTick])
 
   const runningBots = bots.filter(b => b.status === 'running').length
+  const versionLabel = healthData?.version_full ?? 'QuantAgent v0.5.0'
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -114,7 +128,6 @@ export default function Settings({ refreshTick }: Props) {
             {exchanges.map(ex => (
               <ExchangeCard key={ex.name} ex={ex} />
             ))}
-            {/* Add Exchange placeholder */}
             <div className="flex items-center gap-3 p-4 opacity-40">
               <span className="w-2.5 h-2.5 rounded-full border border-border shrink-0" />
               <div>
@@ -161,12 +174,79 @@ export default function Settings({ refreshTick }: Props) {
         </div>
       </section>
 
+      {/* API Cost Analytics */}
+      <section className="bg-bg-card border border-border rounded-lg p-5">
+        <h2 className="text-text-primary text-sm font-semibold mb-4">API Cost Analytics</h2>
+        {costData && costData.cycles_run > 0 ? (
+          <div className="space-y-5">
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-text-muted text-xs uppercase tracking-wide mb-1">Total Spend</p>
+                <p className="text-text-primary font-mono text-xl font-bold">${costData.total_cost.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-text-muted text-xs uppercase tracking-wide mb-1">Cycles Run</p>
+                <p className="text-text-primary font-mono text-xl font-bold">{costData.cycles_run}</p>
+              </div>
+              <div>
+                <p className="text-text-muted text-xs uppercase tracking-wide mb-1">Avg / Cycle</p>
+                <p className="text-text-primary font-mono text-xl font-bold">${costData.avg_cost_per_cycle.toFixed(4)}</p>
+              </div>
+            </div>
+
+            {/* Agent breakdown */}
+            <div>
+              <p className="text-text-secondary text-xs font-medium mb-3">Agent Breakdown</p>
+              <div className="space-y-2.5">
+                {(Object.entries(costData.agents) as [string, { cost: number; pct: number; input_tokens: number; output_tokens: number }][]).map(([agent, stat]) => (
+                  <div key={agent}>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-text-secondary capitalize">{agent}</span>
+                      <span className="font-mono text-text-primary tabular-nums">
+                        ${stat.cost.toFixed(4)} <span className="text-text-muted">({stat.pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-bg-elevated rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${AGENT_COLORS[agent] ?? 'bg-accent'}`}
+                        style={{ width: `${Math.max(stat.pct, 2)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Today + monthly estimate */}
+            <div className="space-y-2 pt-3 border-t border-border/40">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-text-secondary">Today</span>
+                <span className="font-mono text-text-primary tabular-nums">
+                  ${costData.daily_cost.toFixed(4)} · {costData.cycles_today} cycles
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-text-secondary">Monthly Estimate</span>
+                <span className="font-mono text-text-primary tabular-nums">
+                  ${costData.monthly_estimate.toFixed(2)}
+                  <span className="text-text-muted ml-1">(based on today's rate)</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-text-muted text-sm">No cost data yet. Run trading cycles to see analytics.</p>
+        )}
+      </section>
+
       {/* System Info */}
       <section className="bg-bg-card border border-border rounded-lg p-5">
         <h2 className="text-text-primary text-sm font-semibold mb-4">System Info</h2>
         <div className="space-y-2 text-sm">
           {[
-            ['Version', 'QuantAgent v1.0'],
+            ['Version', versionLabel],
+            ['Phase', healthData?.phase ?? '—'],
             ['Architecture', 'Pluggable Exchange Adapters'],
             ['LLM', config?.model_name ?? '—'],
             ['Data Source', config?.data_exchange ?? '—'],

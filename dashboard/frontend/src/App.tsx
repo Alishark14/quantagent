@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Routes, Route } from 'react-router-dom'
+import { api } from './api/client'
 import Sidebar from './components/layout/Sidebar'
 import Header from './components/layout/Header'
 import Overview from './pages/Overview'
@@ -17,6 +18,8 @@ function AppInner() {
   const [refreshTick, setRefreshTick] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [dailyCost, setDailyCost] = useState<number | undefined>()
+  const [cyclesToday, setCyclesToday] = useState<number | undefined>()
   const { mode, setMode } = useGlobalFilter()
 
   const refresh = useCallback(() => {
@@ -24,6 +27,10 @@ function AppInner() {
     setRefreshTick(t => t + 1)
     setLastRefresh(new Date())
     setTimeout(() => setRefreshing(false), 600)
+    api.apiCosts().then(d => {
+      setDailyCost(d.daily_cost)
+      setCyclesToday(d.cycles_today)
+    }).catch(() => {})
   }, [])
 
   // Initial load
@@ -45,6 +52,8 @@ function AppInner() {
           refreshing={refreshing}
           mode={mode}
           setMode={setMode}
+          dailyCost={dailyCost}
+          cyclesToday={cyclesToday}
         />
         <main className="flex-1 overflow-y-auto p-6">
           <Routes>

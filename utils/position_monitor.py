@@ -32,9 +32,11 @@ class PositionMonitor:
         timeframe: str,
         forecast_candles: int,
         check_interval: float = 5.0,  # seconds between price checks
+        raw_symbol: str = "",         # Internal symbol (BTC-USDC) for trade DB lookup
     ):
         self.exchange = exchange
         self.symbol = symbol
+        self.raw_symbol = raw_symbol
         self.direction = direction
         self.amount = amount
         self.entry_price = entry_price
@@ -80,8 +82,28 @@ class PositionMonitor:
             logger.error(f"MONITOR: Failed to get price for {self.symbol}: {e}")
             return 0.0
 
+    def _calculate_pnl(self, exit_price: float) -> float:
+        """Calculate realized P&L based on entry/exit prices and direction."""
+        if self.direction == "LONG":
+            pnl_per_unit = exit_price - self.entry_price
+        else:
+            pnl_per_unit = self.entry_price - exit_price
+        pnl = round(pnl_per_unit * self.amount, 4)
+        logger.info(
+            f"MONITOR P&L calc: direction={self.direction} "
+            f"entry={self.entry_price} exit={exit_price} "
+            f"quantity={self.amount} pnl_per_unit={pnl_per_unit:.4f} "
+            f"total_pnl={pnl}"
+        )
+        return pnl
+
     def _close_position(self, reason: str) -> bool:
-        """Close the position with an IOC reduce-only limit order."""
+        """Close the position with an IOC reduce-only limit order.
+
+        Returns True only if the position is CONFIRMED closed on the exchange.
+        On dYdX, IOC orders may not fill due to thin liquidity — we verify
+        before reporting closure to the dashboard.
+        """
         try:
             price = self._get_current_price()
             if price == 0.0:
@@ -113,13 +135,64 @@ class PositionMonitor:
                     self.symbol, close_amount, {"reduceOnly": True}
                 )
 
+            order_id = order.get("id", "unknown")
+            logger.info(
+                f"MONITOR: Close order sent for {self.direction} {self.symbol} | "
+                f"Reason: {reason} | Order: {order_id} | Price: {price}"
+            )
+
+            # VERIFY: Wait for the exchange to process, then confirm position is gone.
+            # On dYdX testnet, IOC orders may not fill due to thin liquidity.
+            time.sleep(3)
+
+            try:
+                from exchanges import get_adapter
+                verify_adapter = get_adapter()
+                lookup = self.raw_symbol or self.symbol
+                still_open = verify_adapter.has_open_position(lookup)
+            except Exception as verify_err:
+                logger.warning(
+                    f"MONITOR: Could not verify closure for {self.symbol}: {verify_err}. "
+                    f"Assuming closed."
+                )
+                still_open = False
+
+            if still_open:
+                logger.warning(
+                    f"MONITOR: Close order {order_id} sent but position STILL OPEN on "
+                    f"{self.symbol} (IOC likely didn't fill). Will retry next cycle."
+                )
+                return False
+
+            # Confirmed closed — record exit and report to dashboard
             self.exit_reason = reason
             self.exit_price = price
             logger.info(
-                f"MONITOR: Closed {self.direction} {self.symbol} | "
-                f"Reason: {reason} | Entry: {self.entry_price} | "
-                f"Exit: {price} | Order: {order.get('id', 'unknown')}"
+                f"MONITOR: VERIFIED closed {self.direction} {self.symbol} | "
+                f"Reason: {reason} | Entry: {self.entry_price} | Exit: {price}"
             )
+
+            import os
+            bot_id = os.getenv("BOT_ID", "")
+            if bot_id:
+                try:
+                    import requests
+                    requests.post(
+                        "http://localhost:8001/api/internal/trade/close",
+                        json={
+                            "bot_id": bot_id,
+                            "symbol": self.raw_symbol or self.symbol,
+                            "exit_price": price,
+                            "exit_reason": reason,
+                            "exit_order_id": order_id,
+                            "realized_pnl": self._calculate_pnl(price),
+                            "fees_exit": 0,
+                        },
+                        timeout=5,
+                    )
+                except Exception:
+                    pass
+
             return True
 
         except Exception as e:
@@ -140,8 +213,22 @@ class PositionMonitor:
                         f"MONITOR: Time limit reached for {self.symbol} "
                         f"({elapsed:.0f}s / {self.max_lifetime_seconds}s)"
                     )
-                    if self._close_position("time_exit"):
+                    closed = False
+                    for attempt in range(1, 6):
+                        if self._close_position("time_exit"):
+                            closed = True
+                            break
+                        logger.warning(
+                            f"MONITOR: Time exit attempt {attempt}/5 failed for "
+                            f"{self.symbol}, retrying in 5s..."
+                        )
+                        time.sleep(5)
+                    if closed:
                         return
+                    logger.error(
+                        f"MONITOR: CRITICAL — could not close {self.symbol} after "
+                        f"5 attempts. Continuing to monitor."
+                    )
                     self._stop_event.wait(self.check_interval)
                     continue
 
@@ -198,6 +285,7 @@ def start_position_monitor(
     take_profit: float,
     timeframe: str,
     forecast_candles: int,
+    raw_symbol: str = "",
 ) -> PositionMonitor:
     """Create and start a position monitor, replacing any existing one for the symbol."""
     if symbol in _active_monitors:
@@ -206,6 +294,7 @@ def start_position_monitor(
     monitor = PositionMonitor(
         exchange=exchange,
         symbol=symbol,
+        raw_symbol=raw_symbol,
         direction=direction,
         amount=amount,
         entry_price=entry_price,

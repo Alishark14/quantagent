@@ -19,9 +19,9 @@ from .base import ExchangeAdapter, OrderResult, Position
 logger = logging.getLogger(__name__)
 
 SYMBOL_MAP = {
-    "BTC": "BTC/USDC:USDC",
-    "ETH": "ETH/USDC:USDC",
-    "SOL": "SOL/USDC:USDC",
+    "BTC-USDC": "BTC/USDC:USDC",
+    "ETH-USDC": "ETH/USDC:USDC",
+    "SOL-USDC": "SOL/USDC:USDC",
 }
 
 
@@ -124,12 +124,15 @@ class DydxAdapter(ExchangeAdapter):
 
     def to_exchange_symbol(self, symbol: str) -> str:
         if "/" in symbol:
-            return symbol
-        for base, mapped in SYMBOL_MAP.items():
-            if symbol.upper().startswith(base):
-                return mapped
+            return symbol  # Already in CCXT format
+        if symbol in SYMBOL_MAP:
+            return SYMBOL_MAP[symbol]
+        # Auto-generate for unmapped USDC pairs: "XYZ-USDC" → "XYZ/USDC:USDC"
+        if symbol.endswith("-USDC"):
+            base = symbol[:-5]  # strip "-USDC"
+            return f"{base}/USDC:USDC"
         raise ValueError(
-            f"No dYdX symbol mapping for '{symbol}'. Supported bases: {list(SYMBOL_MAP.keys())}"
+            f"No dYdX symbol mapping for '{symbol}'. Known symbols: {list(SYMBOL_MAP.keys())}"
         )
 
     def precision_adjust(self, symbol: str, amount: float, price: float) -> tuple[float, float]:
@@ -220,7 +223,7 @@ class DydxAdapter(ExchangeAdapter):
     def has_open_position(self, symbol: str) -> bool:
         """Check via dYdX indexer API, filtered by specific symbol.
 
-        symbol: raw format e.g. "BTCUSDT" or "ETHUSDT"
+        symbol: internal format e.g. "BTC-USDC"
         Converts to dYdX market ID (e.g. "BTC-USD") before checking.
         """
         from config import Secrets
@@ -230,8 +233,8 @@ class DydxAdapter(ExchangeAdapter):
             else "https://indexer.dydx.trade"
         )
         url = f"{base}/v4/addresses/{Secrets.DYDX_ADDRESS}/subaccountNumber/0"
-        # BTCUSDT → BTC-USD, ETHUSDT → ETH-USD
-        market_id = symbol.replace("USDT", "").replace("USDC", "") + "-USD"
+        # BTC-USDC → BTC-USD (dYdX indexer format)
+        market_id = symbol.replace("-USDC", "-USD")
         try:
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()

@@ -16,6 +16,8 @@ export interface OverviewData {
   avg_hold_time: string
   trades_today: number
   equity_curve: EquityPoint[]
+  daily_pnl?: number
+  open_trades?: number
 }
 
 export interface TradeRecord {
@@ -29,6 +31,7 @@ export interface TradeRecord {
   pnl: number
   pnl_pct: number
   exit_type: 'tp' | 'sl' | 'time' | 'unknown'
+  exit_reason?: string
   rr_ratio: number
   atr_value: number | null
   sl_distance: number | null
@@ -43,6 +46,10 @@ export interface TradeRecord {
   quantity?: number
   trading_mode?: string
   exchange?: string
+  entry_time?: string
+  exit_time?: string | null
+  fees_total?: number
+  cycle_cost?: number
 }
 
 export interface TradesResponse {
@@ -81,6 +88,8 @@ export interface BreakdownRow {
   win_rate: number
   avg_pnl: number
   total_pnl: number
+  api_cost?: number
+  net_pnl?: number
 }
 
 export interface BreakdownResponse {
@@ -147,6 +156,37 @@ export interface ExchangeStatus {
   testnet?: boolean
   balance?: number | null
   error?: string
+}
+
+export interface HealthData {
+  status: string
+  version?: string
+  version_date?: string
+  version_full?: string
+  phase?: string
+}
+
+export interface ApiCostAgentStat {
+  cost: number
+  pct: number
+  input_tokens: number
+  output_tokens: number
+}
+
+export interface ApiCostData {
+  total_cost: number
+  cycles_run: number
+  avg_cost_per_cycle: number
+  daily_cost: number
+  cycles_today: number
+  agents: {
+    indicator: ApiCostAgentStat
+    pattern: ApiCostAgentStat
+    trend: ApiCostAgentStat
+    decision: ApiCostAgentStat
+  }
+  by_bot: Record<string, { cost: number; cycles: number; name: string }>
+  monthly_estimate: number
 }
 
 export interface BotCreate {

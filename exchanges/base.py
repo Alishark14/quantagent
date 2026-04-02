@@ -58,15 +58,15 @@ class ExchangeAdapter(ABC):
     def get_current_price(self, symbol: str) -> float:
         """Get current price for a symbol.
         Args:
-            symbol: Unified symbol like "BTCUSDT"
+            symbol: Internal symbol like "BTC-USDC"
         Returns float price in USD.
         """
         pass
 
     @abstractmethod
     def to_exchange_symbol(self, symbol: str) -> str:
-        """Convert unified symbol (BTCUSDT) to exchange format.
-        e.g., BTCUSDT → BTC/USDC:USDC
+        """Convert internal symbol (BTC-USDC) to CCXT exchange format.
+        e.g., BTC-USDC → BTC/USDC:USDC
         """
         pass
 
@@ -81,7 +81,7 @@ class ExchangeAdapter(ABC):
     def place_market_order(self, symbol: str, side: str, amount: float) -> OrderResult:
         """Place a market order (or IOC limit simulating market).
         Args:
-            symbol: Unified symbol like "BTCUSDT"
+            symbol: Internal symbol like "BTC-USDC"
             side: "buy" or "sell"
             amount: Quantity in base currency
         """

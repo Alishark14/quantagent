@@ -1,11 +1,13 @@
 import type {
   AgentsData,
+  ApiCostData,
   Bot,
   BotCreate,
   BreakdownResponse,
   ConfigData,
   ExchangeStatus,
   ExitsData,
+  HealthData,
   OverviewData,
   TradeRecord,
   TradesResponse,
@@ -111,9 +113,17 @@ export const api = {
 
   config: () => get<ConfigData>('/api/config'),
 
-  health: () => get<{ status: string }>('/api/health'),
+  health: () => get<HealthData>('/api/health'),
 
   exchangeStatus: () => get<ExchangeStatus[]>('/api/settings/exchanges'),
+
+  apiCosts: (botId?: string, days?: number) => {
+    const q = new URLSearchParams()
+    if (botId) q.set('bot_id', botId)
+    if (days !== undefined) q.set('days', String(days))
+    const qs = q.toString()
+    return get<ApiCostData>(`/api/stats/api-costs${qs ? `?${qs}` : ''}`)
+  },
 
   // ── Bot CRUD ───────────────────────────────────────────────────────────────
   getBots: () => get<Bot[]>('/api/bots'),
@@ -141,6 +151,14 @@ export const api = {
   // ── Bot trades ─────────────────────────────────────────────────────────────
   getBotTrades: (id: string, limit = 50, offset = 0) =>
     get<TradeRecord[]>(`/api/bots/${id}/trades?limit=${limit}&offset=${offset}`),
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  dailyPnl: (mode?: string) => {
+    const q = new URLSearchParams()
+    if (mode && mode !== 'all') q.set('mode', mode)
+    const qs = q.toString()
+    return get<Record<string, number>>(`/api/stats/daily-pnl${qs ? `?${qs}` : ''}`)
+  },
 
   // ── Guardian ───────────────────────────────────────────────────────────────
   guardianStatus: () =>

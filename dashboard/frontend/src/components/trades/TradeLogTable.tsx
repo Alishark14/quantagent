@@ -62,14 +62,45 @@ function PnlCell({ value }: { value: number }) {
   )
 }
 
-function ExitBadge({ type }: { type: string }) {
+function ExitBadge({ type, reason }: { type: string; reason?: string }) {
   const map: Record<string, string> = {
     tp: 'bg-profit/15 text-profit',
     sl: 'bg-loss/15 text-loss',
     time: 'bg-yellow-500/15 text-yellow-400',
     unknown: 'bg-bg-elevated text-text-muted',
   }
-  return <span className={`px-1.5 py-0.5 rounded text-xs font-semibold uppercase ${map[type] ?? map.unknown}`}>{type}</span>
+  const labelMap: Record<string, string> = {
+    stop_loss: 'SL',
+    take_profit: 'TP',
+    time_exit: 'Time',
+    manual: 'Manual',
+    guardian: 'Guardian',
+    monitor: 'Monitor',
+  }
+  const label = reason ? (labelMap[reason] ?? reason.toUpperCase()) : type.toUpperCase()
+  return <span className={`px-1.5 py-0.5 rounded text-xs font-semibold uppercase ${map[type] ?? map.unknown}`}>{label}</span>
+}
+
+function StatusDot({ status, pnl }: { status: string; pnl: number }) {
+  if (status === 'open') {
+    return <span className="inline-flex items-center gap-1 text-xs text-yellow-400"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse inline-block" />Open</span>
+  }
+  return <span className={`inline-flex items-center gap-1 text-xs ${pnl >= 0 ? 'text-profit' : 'text-loss'}`}><span className={`w-1.5 h-1.5 rounded-full inline-block ${pnl >= 0 ? 'bg-profit' : 'bg-loss'}`} />Closed</span>
+}
+
+function Duration({ entryTime, exitTime }: { entryTime?: string; exitTime?: string | null }) {
+  if (!entryTime || !exitTime) return <span className="text-text-muted text-xs">—</span>
+  try {
+    const ms = new Date(exitTime).getTime() - new Date(entryTime).getTime()
+    if (ms < 0) return <span className="text-text-muted text-xs">—</span>
+    const mins = Math.floor(ms / 60000)
+    if (mins < 60) return <span className="font-mono text-xs text-text-muted">{mins}m</span>
+    const hrs = Math.floor(mins / 60)
+    const rem = mins % 60
+    return <span className="font-mono text-xs text-text-muted">{hrs}h{rem > 0 ? ` ${rem}m` : ''}</span>
+  } catch {
+    return <span className="text-text-muted text-xs">—</span>
+  }
 }
 
 function exportCSV(trades: TradeRecord[]) {
@@ -88,6 +119,11 @@ function exportCSV(trades: TradeRecord[]) {
 }
 
 const COLUMNS = [
+  helper.display({
+    id: 'status',
+    header: 'Status',
+    cell: ({ row }) => <StatusDot status={row.original.status} pnl={row.original.pnl} />,
+  }),
   helper.accessor('bot_name', {
     header: 'Bot',
     cell: i => <BotBadge name={i.getValue()} />,
@@ -129,6 +165,14 @@ const COLUMNS = [
       )
     },
   }),
+  helper.accessor('cycle_cost', {
+    header: 'Cost',
+    cell: i => {
+      const v = i.getValue()
+      if (!v || v === 0) return <span className="text-text-muted text-xs">—</span>
+      return <span className="font-mono tabular-nums text-xs text-text-muted">${v.toFixed(4)}</span>
+    },
+  }),
   helper.accessor('entry_price', {
     header: 'Entry',
     cell: i => <span className="font-mono tabular-nums text-xs">{i.getValue().toLocaleString()}</span>,
@@ -149,9 +193,20 @@ const COLUMNS = [
     header: 'P&L %',
     cell: i => <PnlCell value={i.getValue()} />,
   }),
-  helper.accessor('exit_type', {
+  helper.display({
+    id: 'exit',
     header: 'Exit',
-    cell: i => <ExitBadge type={i.getValue()} />,
+    cell: ({ row }) => <ExitBadge type={row.original.exit_type} reason={row.original.exit_reason} />,
+  }),
+  helper.display({
+    id: 'duration',
+    header: 'Duration',
+    cell: ({ row }) => (
+      <Duration
+        entryTime={row.original.entry_time || row.original.timestamp}
+        exitTime={row.original.exit_time}
+      />
+    ),
   }),
   helper.accessor('rr_ratio', {
     header: 'RR',

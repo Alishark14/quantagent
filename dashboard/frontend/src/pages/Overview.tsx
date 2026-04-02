@@ -17,6 +17,7 @@ export default function Overview({ refreshTick }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [botId, setBotId] = useState<string | undefined>()
+  const [dailyApiCost, setDailyApiCost] = useState(0)
   const { mode } = useGlobalFilter()
 
   useEffect(() => {
@@ -24,10 +25,12 @@ export default function Overview({ refreshTick }: Props) {
     Promise.all([
       api.overview(botId, mode),
       api.trades({ limit: 10, offset: 0, botId, mode }),
+      api.apiCosts(botId).catch(() => null),
     ])
-      .then(([ov, tr]) => {
+      .then(([ov, tr, costs]) => {
         setOverview(ov)
         setRecentTrades(tr.trades)
+        setDailyApiCost(costs?.daily_cost ?? 0)
         setError(null)
       })
       .catch(e => setError(e.message))
@@ -60,7 +63,7 @@ export default function Overview({ refreshTick }: Props) {
         <h1 className="text-text-primary text-lg font-semibold">Overview</h1>
         <BotSelector value={botId} onChange={setBotId} />
       </div>
-      <KPICards data={overview} />
+      <KPICards data={overview} dailyApiCost={dailyApiCost} />
       <EquityCurve data={overview.equity_curve} />
       <RecentTrades trades={recentTrades} />
     </div>

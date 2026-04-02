@@ -11,8 +11,8 @@ from .base import ExchangeAdapter, OrderResult, Position
 logger = logging.getLogger(__name__)
 
 SYMBOL_MAP = {
-    "BTC": "BTC/USD:BTC",
-    "ETH": "ETH/USD:ETH",
+    "BTC-USDC": "BTC/USD:BTC",
+    "ETH-USDC": "ETH/USD:ETH",
 }
 
 
@@ -63,13 +63,12 @@ class DeribitAdapter(ExchangeAdapter):
 
     def to_exchange_symbol(self, symbol: str) -> str:
         if "/" in symbol:
-            return symbol
-        for base, mapped in SYMBOL_MAP.items():
-            if symbol.upper().startswith(base):
-                return mapped
+            return symbol  # Already in CCXT format
+        if symbol in SYMBOL_MAP:
+            return SYMBOL_MAP[symbol]
         raise ValueError(
             f"No Deribit symbol mapping for '{symbol}'. "
-            f"Supported bases: {list(SYMBOL_MAP.keys())}"
+            f"Known symbols: {list(SYMBOL_MAP.keys())}"
         )
 
     def precision_adjust(self, symbol: str, amount: float, price: float) -> tuple[float, float]:

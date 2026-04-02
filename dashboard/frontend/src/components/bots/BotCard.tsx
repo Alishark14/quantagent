@@ -15,6 +15,8 @@ interface Props {
   onEdit: () => void
   onDelete: () => void
   actionLoading?: boolean
+  dailyPnl?: number
+  apiCost?: number
 }
 
 const STATUS_DOT: Record<Bot['status'], string> = {
@@ -81,12 +83,16 @@ export default function BotCard({
   onEdit,
   onDelete,
   actionLoading = false,
+  dailyPnl,
+  apiCost,
 }: Props) {
   const canStart = bot.status === 'stopped' || bot.status === 'paused' || bot.status === 'error'
   const canPause = bot.status === 'running'
   const canStop = bot.status === 'running' || bot.status === 'paused'
 
-  const pnlColor = bot.daily_loss_usd > 0 ? 'text-[#ef4444]' : 'text-[#22c55e]'
+  // Use real daily P&L if available, otherwise fall back to daily_loss_usd
+  const realPnl = dailyPnl !== undefined ? dailyPnl : -bot.daily_loss_usd
+  const pnlColor = realPnl > 0 ? 'text-[#22c55e]' : realPnl < 0 ? 'text-[#ef4444]' : 'text-text-muted'
 
   function handleDelete() {
     if (window.confirm(`Delete bot "${bot.name}"? This cannot be undone.`)) {
@@ -154,13 +160,19 @@ export default function BotCard({
         <div>
           <span className="text-text-muted">Daily P&L</span>
           <span className={`ml-1.5 font-medium ${pnlColor}`}>
-            {bot.daily_loss_usd > 0 ? `-$${bot.daily_loss_usd.toFixed(2)}` : '$0.00'}
+            {realPnl >= 0 ? `+$${realPnl.toFixed(2)}` : `-$${Math.abs(realPnl).toFixed(2)}`}
           </span>
         </div>
         <div className="col-span-2">
           <span className="text-text-muted">Heartbeat</span>
           <span className="text-text-secondary ml-1.5">{heartbeatLabel(bot.last_heartbeat)}</span>
         </div>
+        {apiCost !== undefined && (
+          <div>
+            <span className="text-text-muted">API Cost</span>
+            <span className="text-text-secondary ml-1.5 font-mono">${apiCost.toFixed(4)}/day</span>
+          </div>
+        )}
       </div>
 
       {/* Error */}

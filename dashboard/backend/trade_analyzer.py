@@ -1,11 +1,14 @@
 """Core analytics engine for QuantAgent dashboard."""
 
 import json
+import logging
 import math
 import random
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 TRADE_LOG_PATH = Path(__file__).parent.parent.parent / "trade_logs" / "trade_summary.jsonl"
 
@@ -50,13 +53,23 @@ def compute_pnl(trade_entry: dict, exit_type: str) -> float:
     entry = float(trade.get("entry_price", 0))
     stop_loss = float(decision.get("stop_loss", entry))
     take_profit = float(decision.get("take_profit", entry))
+    quantity = float(trade.get("quantity", 0))
+    position_size_usd = float(trade.get("position_size_usd", 0)) or float(trade.get("position_size", 0))
 
     if exit_type == "tp":
-        raw = take_profit - entry if direction == "LONG" else entry - take_profit
+        price_diff = take_profit - entry if direction == "LONG" else entry - take_profit
     else:
-        raw = stop_loss - entry if direction == "LONG" else entry - stop_loss
+        price_diff = stop_loss - entry if direction == "LONG" else entry - stop_loss
 
-    return round(raw, 4)
+    pnl = round(price_diff * quantity, 4)
+
+    if position_size_usd and abs(pnl) > position_size_usd * 2:
+        logger.warning(
+            f"P&L SANITY: pnl={pnl} exceeds 2× position size ${position_size_usd}. "
+            f"entry={entry} stop_loss={stop_loss} take_profit={take_profit} qty={quantity}"
+        )
+
+    return pnl
 
 
 def parse_agent_signals(justification: str, direction: str) -> dict:
@@ -101,8 +114,8 @@ def enrich_trade(trade_entry: dict) -> dict:
 
     exit_type = detect_exit_type(trade_entry)
     pnl = compute_pnl(trade_entry, exit_type)
-    entry = float(trade.get("entry_price", 1))
-    pnl_pct = round((pnl / entry) * 100, 4) if entry else 0.0
+    position_size_usd = float(trade.get("position_size_usd", 0)) or float(trade.get("position_size", 0))
+    pnl_pct = round((pnl / position_size_usd) * 100, 4) if position_size_usd else 0.0
 
     justification = decision.get("justification", "")
     direction = trade.get("direction", "LONG")
@@ -278,19 +291,77 @@ def compute_exits(enriched: list[dict]) -> dict:
     }
 
 
-class TradeOutcomeTracker:
-    """
-    TODO: Periodically check actual outcomes on Deribit and update the JSONL.
+def compute_overview_sqlite(
+    trades: list[dict],
+    daily_pnl: float = 0.0,
+    open_count: int = 0,
+) -> dict:
+    """Compute overview stats from SQLite closed trade records."""
+    pnls = [t["realized_pnl"] for t in trades if t.get("realized_pnl") is not None]
 
-    Future implementation:
-    - Connect to Deribit via CCXT
-    - Fetch recent closed positions
-    - Match by order_id to logged trades
-    - Update JSONL with actual exit_price, exit_type, actual_pnl
-    """
+    total_trades = len(pnls)
+    wins = sum(1 for p in pnls if p > 0)
+    losses = total_trades - wins
+    win_rate = round(wins / total_trades * 100, 2) if total_trades else 0.0
 
-    def __init__(self, exchange=None):
-        self.exchange = exchange
+    total_pnl = round(sum(pnls), 4)
+    winning_pnl = sum(p for p in pnls if p > 0)
+    losing_pnl = abs(sum(p for p in pnls if p < 0))
+    profit_factor = round(winning_pnl / losing_pnl, 3) if losing_pnl else 0.0
+    expectancy = round(total_pnl / total_trades, 4) if total_trades else 0.0
 
-    def update_outcomes(self):
-        raise NotImplementedError("TradeOutcomeTracker is not yet implemented.")
+    # Equity curve from trades sorted by exit_time
+    sorted_trades = sorted(trades, key=lambda t: t.get("exit_time") or t.get("created_at") or "")
+    equity_curve = []
+    cum = 0.0
+    for t in sorted_trades:
+        if t.get("realized_pnl") is not None:
+            cum += t["realized_pnl"]
+            equity_curve.append({
+                "timestamp": t.get("exit_time") or t.get("created_at", ""),
+                "cumulative_pnl": round(cum, 4),
+            })
+
+    # Max drawdown
+    max_drawdown = 0.0
+    peak = 0.0
+    for point in equity_curve:
+        val = point["cumulative_pnl"]
+        if val > peak:
+            peak = val
+        dd = peak - val
+        if dd > max_drawdown:
+            max_drawdown = dd
+    max_drawdown = round(max_drawdown, 4)
+
+    # Sharpe ratio
+    if len(pnls) >= 2:
+        mean_r = sum(pnls) / len(pnls)
+        variance = sum((p - mean_r) ** 2 for p in pnls) / (len(pnls) - 1)
+        std_r = math.sqrt(variance) if variance > 0 else 0
+        sharpe = round((mean_r / std_r) * math.sqrt(365), 3) if std_r else 0.0
+    else:
+        sharpe = 0.0
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    trades_today = sum(
+        1 for t in trades
+        if (t.get("exit_time") or t.get("created_at") or "").startswith(today)
+    )
+
+    return {
+        "total_trades": total_trades,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": win_rate,
+        "total_pnl": total_pnl,
+        "profit_factor": profit_factor,
+        "expectancy": expectancy,
+        "max_drawdown": max_drawdown,
+        "sharpe_ratio": sharpe,
+        "avg_hold_time": "real",
+        "trades_today": trades_today,
+        "equity_curve": equity_curve,
+        "daily_pnl": round(daily_pnl, 4),
+        "open_trades": open_count,
+    }

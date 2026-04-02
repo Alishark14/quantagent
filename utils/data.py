@@ -7,17 +7,51 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+# Crypto symbols that have good public OHLCV data on Bybit (USDT pairs).
+# Everything else (HIP-3 commodities, indices, stocks, forex) fetches from
+# the configured trading exchange (Hyperliquid) via its adapter.
+BYBIT_SYMBOLS: dict[str, str] = {
+    "BTC-USDC":  "BTC/USDT",
+    "ETH-USDC":  "ETH/USDT",
+    "SOL-USDC":  "SOL/USDT",
+    "DOGE-USDC": "DOGE/USDT",
+    "AVAX-USDC": "AVAX/USDT",
+    "LINK-USDC": "LINK/USDT",
+}
+
+# Backward-compat alias
+DATA_SYMBOL_MAP: dict[str, str | None] = {k: v for k, v in BYBIT_SYMBOLS.items()}
+
 
 def to_ccxt_symbol(symbol: str) -> str:
-    """Convert 'BTCUSDT' style symbol to CCXT format 'BTC/USDT'."""
+    """Convert internal symbol to Bybit CCXT format for OHLCV fetching.
+
+    Handles:
+    - New format "BTC-USDC" → "BTC/USDT" (Bybit has best public OHLCV)
+    - Legacy format "BTCUSDT" → "BTC/USDT" (backward compat for JSONL readers)
+    - Already-formatted "/"-containing symbols passed through unchanged
+    """
     if "/" in symbol:
         return symbol
-    # Handle common quote currencies (order matters: check longer ones first)
+    # New BASE-USDC format
+    if "-" in symbol:
+        mapped = BYBIT_SYMBOLS.get(symbol)
+        if mapped:
+            return mapped
+        # Unmapped: assume standard crypto — "XYZ-USDC" → "XYZ/USDT"
+        base = symbol.split("-")[0]
+        return f"{base}/USDT"
+    # Legacy BTCUSDT format (backward compat)
     for quote in ("USDT", "USDC", "BTC", "ETH", "BNB"):
         if symbol.endswith(quote):
             base = symbol[: -len(quote)]
             return f"{base}/{quote}"
     return symbol
+
+
+def _get_bybit() -> ccxt.Exchange:
+    """Create a public (no-auth) Bybit CCXT instance for OHLC data."""
+    return ccxt.bybit({"enableRateLimit": True, "options": {"defaultType": "linear"}})
 
 
 def _get_data_exchange() -> ccxt.Exchange:
@@ -37,8 +71,12 @@ def fetch_ohlc(
 ) -> list[dict]:
     """Fetch OHLC candles via CCXT.
 
+    For standard crypto (BTC-USDC, ETH-USDC, etc.) data is fetched from Bybit
+    (best public OHLCV). For commodities and indices (GOLD-USDC, S&P500-USDC,
+    etc.) data is fetched from the configured trading exchange adapter.
+
     Args:
-        symbol: Trading pair, e.g. "BTCUSDT"
+        symbol: Internal symbol, e.g. "BTC-USDC" or legacy "BTCUSDT"
         timeframe: Candle interval, e.g. "1h"
         limit: Number of candles to fetch
 
@@ -49,14 +87,33 @@ def fetch_ohlc(
     timeframe = timeframe or Config.TIMEFRAME
     limit = limit or Config.LOOKBACK_BARS
 
-    ccxt_symbol = to_ccxt_symbol(symbol)
-    exchange = _get_data_exchange()
+    # Determine data source
+    use_bybit = symbol in BYBIT_SYMBOLS
+    extra_params: dict = {}
+
+    # Legacy BTCUSDT-style symbols (not in BYBIT_SYMBOLS) fall through to Bybit too
+    if not use_bybit and "-" not in symbol and "/" not in symbol:
+        use_bybit = True
+
+    if use_bybit:
+        exchange = _get_bybit()
+        fetch_symbol = to_ccxt_symbol(symbol)
+        source = "bybit"
+    else:
+        # HIP-3 commodity / index / stock / forex — fetch from trading exchange adapter
+        from exchanges import get_adapter
+        adapter = get_adapter()
+        exchange = adapter.get_exchange_client()
+        fetch_symbol = adapter.to_exchange_symbol(symbol)
+        source = adapter.name
+        # Pass HIP-3 dex param if the adapter supports it
+        if hasattr(adapter, "_get_hip3_params"):
+            extra_params = adapter._get_hip3_params(fetch_symbol)
 
     logger.info(
-        f"Fetching {limit} x {timeframe} candles for {ccxt_symbol} "
-        f"via {Config.DATA_EXCHANGE}"
+        f"Fetching {limit} x {timeframe} candles for {fetch_symbol} via {source}"
     )
-    raw = exchange.fetch_ohlcv(ccxt_symbol, timeframe, limit=limit)
+    raw = exchange.fetch_ohlcv(fetch_symbol, timeframe, limit=limit, params=extra_params)
 
     candles = [
         {

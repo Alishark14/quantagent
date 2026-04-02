@@ -22,6 +22,8 @@ class OverviewResponse(BaseModel):
     avg_hold_time: str
     trades_today: int
     equity_curve: list[EquityPoint]
+    daily_pnl: float = 0.0
+    open_trades: int = 0
 
 
 class TradeRecord(BaseModel):
@@ -35,6 +37,7 @@ class TradeRecord(BaseModel):
     pnl: float
     pnl_pct: float
     exit_type: str
+    exit_reason: str = ""
     rr_ratio: float
     atr_value: Optional[float] = None
     sl_distance: Optional[float] = None
@@ -49,6 +52,10 @@ class TradeRecord(BaseModel):
     quantity: float = 0.0
     trading_mode: str = "paper"
     exchange: str = ""
+    entry_time: str = ""
+    exit_time: Optional[str] = None
+    fees_total: float = 0.0
+    cycle_cost: float = 0.0
 
 
 class TradesResponse(BaseModel):
@@ -83,6 +90,8 @@ class BreakdownRow(BaseModel):
     win_rate: float
     avg_pnl: float
     total_pnl: float
+    api_cost: float = 0.0
+    net_pnl: float = 0.0
 
 
 class ExitsResponse(BaseModel):

@@ -18,6 +18,9 @@ export default function BreakdownView({ data }: Props) {
     return <p className="text-text-muted text-sm py-8 text-center">No data</p>
   }
 
+  // Show cost columns only if any row has api_cost data (bot dimension)
+  const hasCostData = data.some(r => (r.api_cost ?? 0) > 0)
+
   return (
     <div className="space-y-6">
       <div className="bg-bg-card border border-border rounded-lg p-5">
@@ -48,12 +51,16 @@ export default function BreakdownView({ data }: Props) {
               <th className="px-4 py-3 text-right font-medium">Win Rate</th>
               <th className="px-4 py-3 text-right font-medium">Avg P&L</th>
               <th className="px-4 py-3 text-right font-medium">Total P&L</th>
+              {hasCostData && <th className="px-4 py-3 text-right font-medium">API Cost</th>}
+              {hasCostData && <th className="px-4 py-3 text-right font-medium">Net P&L</th>}
             </tr>
           </thead>
           <tbody>
             {data.map((row, i) => {
               const pnlColor = row.total_pnl > 0 ? 'text-profit' : row.total_pnl < 0 ? 'text-loss' : 'text-text-secondary'
               const wrColor = row.win_rate >= 50 ? 'text-profit' : 'text-loss'
+              const netPnl = row.net_pnl ?? row.total_pnl
+              const netColor = netPnl > 0 ? 'text-profit' : netPnl < 0 ? 'text-loss' : 'text-text-secondary'
               return (
                 <tr key={i} className="border-b border-border/50 hover:bg-bg-elevated/50 transition-colors">
                   <td className="px-4 py-2.5 font-mono text-xs text-text-primary">{row.group}</td>
@@ -67,6 +74,16 @@ export default function BreakdownView({ data }: Props) {
                   <td className={`px-4 py-2.5 text-right font-mono tabular-nums text-xs font-semibold ${pnlColor}`}>
                     {row.total_pnl >= 0 ? '+' : ''}{row.total_pnl.toFixed(4)}
                   </td>
+                  {hasCostData && (
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-xs text-text-muted">
+                      {(row.api_cost ?? 0) > 0 ? `$${(row.api_cost ?? 0).toFixed(4)}` : '—'}
+                    </td>
+                  )}
+                  {hasCostData && (
+                    <td className={`px-4 py-2.5 text-right font-mono tabular-nums text-xs font-semibold ${netColor}`}>
+                      {netPnl >= 0 ? '+' : ''}{netPnl.toFixed(4)}
+                    </td>
+                  )}
                 </tr>
               )
             })}

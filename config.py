@@ -41,7 +41,7 @@ class TradingConfig:
     BOT_NAME: str = os.getenv("BOT_NAME", "manual")
 
     # Symbol & timeframe
-    SYMBOL: str = os.getenv("SYMBOL", "BTCUSDT")
+    SYMBOL: str = os.getenv("SYMBOL", "BTC-USDC")
     TIMEFRAME: str = os.getenv("TIMEFRAME", "1h")
     LOOKBACK_BARS: int = int(os.getenv("LOOKBACK_BARS", "100"))
 

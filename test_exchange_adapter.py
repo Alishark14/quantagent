@@ -35,13 +35,13 @@ except Exception as e:
     print(f"✗ get_balance() failed: {e}")
 
 try:
-    price = adapter.get_current_price("BTCUSDT")
+    price = adapter.get_current_price("BTC-USDC")
     print(f"✓ BTC price:      ${price:,.2f}")
 except Exception as e:
     print(f"✗ get_current_price() failed: {e}")
 
 try:
-    has_pos = adapter.has_open_position("BTCUSDT")
+    has_pos = adapter.has_open_position("BTC-USDC")
     print(f"✓ BTC position:   {'OPEN' if has_pos else 'none'}")
 except Exception as e:
     print(f"✗ has_open_position() failed: {e}")
@@ -55,8 +55,8 @@ except Exception as e:
     print(f"✗ get_open_positions() failed: {e}")
 
 try:
-    ex_sym = adapter.to_exchange_symbol("BTCUSDT")
-    print(f"✓ Symbol map:     BTCUSDT → {ex_sym}")
+    ex_sym = adapter.to_exchange_symbol("BTC-USDC")
+    print(f"✓ Symbol map:     BTC-USDC → {ex_sym} (CCXT format)")
 except Exception as e:
     print(f"✗ to_exchange_symbol() failed: {e}")
 

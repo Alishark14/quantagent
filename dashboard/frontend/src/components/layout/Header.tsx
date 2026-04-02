@@ -7,6 +7,8 @@ interface HeaderProps {
   refreshing: boolean
   mode: Mode
   setMode: (m: Mode) => void
+  dailyCost?: number
+  cyclesToday?: number
 }
 
 const MODE_BUTTONS: { key: Mode; label: string }[] = [
@@ -24,13 +26,17 @@ function modeStyle(key: Mode, active: Mode): string {
   return 'bg-bg-elevated text-text-primary'
 }
 
-export default function Header({ lastRefresh, onRefresh, refreshing, mode, setMode }: HeaderProps) {
+export default function Header({ lastRefresh, onRefresh, refreshing, mode, setMode, dailyCost, cyclesToday }: HeaderProps) {
   return (
     <header className="h-12 flex items-center justify-between px-6 border-b border-border bg-bg-card shrink-0 gap-4">
-      <span className="text-text-secondary text-sm shrink-0">
-        {lastRefresh
-          ? `Last updated: ${lastRefresh.toLocaleTimeString()}`
-          : 'Loading…'}
+      <span className="text-text-secondary text-xs shrink-0 tabular-nums">
+        {lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : 'Loading…'}
+        {dailyCost !== undefined
+          ? ` · API $${dailyCost.toFixed(3)}/day`
+          : ''}
+        {cyclesToday !== undefined
+          ? ` · ${cyclesToday} cycle${cyclesToday !== 1 ? 's' : ''}`
+          : ''}
       </span>
 
       {/* Paper / Live / All segmented toggle */}

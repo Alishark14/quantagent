@@ -17,6 +17,8 @@ export default function Bots({ refreshTick }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null) // bot_id being acted on
+  const [dailyPnlByBot, setDailyPnlByBot] = useState<Record<string, number>>({})
+  const [apiCostByBot, setApiCostByBot] = useState<Record<string, number>>({})
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editBot, setEditBot] = useState<Bot | undefined>()
@@ -29,8 +31,23 @@ export default function Bots({ refreshTick }: Props) {
   const [guardianActive, setGuardianActive] = useState(false)
 
   const fetchBots = useCallback(() => {
-    api.getBots()
-      .then(data => { setBots(data); setError(null) })
+    Promise.all([
+      api.getBots(),
+      api.dailyPnl().catch(() => ({} as Record<string, number>)),
+      api.apiCosts().catch(() => null),
+    ])
+      .then(([data, pnl, costs]) => {
+        setBots(data)
+        setDailyPnlByBot(pnl)
+        if (costs?.by_bot) {
+          const costMap: Record<string, number> = {}
+          for (const [botId, info] of Object.entries(costs.by_bot)) {
+            costMap[botId] = info.cost
+          }
+          setApiCostByBot(costMap)
+        }
+        setError(null)
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
@@ -244,6 +261,8 @@ export default function Bots({ refreshTick }: Props) {
                 onPause={() => withAction(bot.id, () => api.pauseBot(bot.id))}
                 onEdit={() => { setEditBot(bot); setModalOpen(true) }}
                 onDelete={() => handleDelete(bot)}
+                dailyPnl={dailyPnlByBot[bot.id]}
+                apiCost={apiCostByBot[bot.id]}
               />
             </div>
           ))}

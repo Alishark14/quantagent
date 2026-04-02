@@ -18,18 +18,29 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+from version import __version__, __version_date__, __version_full__, __phase__
+
 from database import (
+    close_trade,
     create_bot,
+    create_cycle_cost,
+    create_trade,
     delete_bot,
     get_all_bots,
+    get_api_cost_stats,
     get_bot,
     get_bot_trades,
+    get_daily_pnl,
+    get_open_trades,
+    get_trade_stats,
+    get_trades,
     increment_daily_loss,
     init_db,
     record_trade,
     update_bot,
     update_bot_heartbeat,
     update_bot_status,
+    update_trade_cycle_cost,
 )
 from models import (
     AgentsResponse,
@@ -54,6 +65,7 @@ from trade_analyzer import (
     compute_breakdown,
     compute_exits,
     compute_overview,
+    compute_overview_sqlite,
     get_all_enriched,
 )
 
@@ -68,6 +80,33 @@ async def guardian_loop() -> None:
         except Exception as e:
             logger.error(f"Guardian loop error: {e}")
         await asyncio.sleep(60)
+
+
+async def tracker_loop() -> None:
+    """Run trade outcome reconciliation every 30 seconds."""
+    await asyncio.sleep(15)  # Stagger with guardian (which starts at 10s)
+    while True:
+        try:
+            from utils.trade_outcome_tracker import reconcile_trades
+            from exchanges import get_adapter
+            from collections import defaultdict
+
+            open_trades = get_open_trades()
+            if open_trades:
+                by_exchange: dict[str, list] = defaultdict(list)
+                for t in open_trades:
+                    by_exchange[t.get("exchange", "dydx")].append(t)
+
+                for exchange_name, trades in by_exchange.items():
+                    try:
+                        adapter = get_adapter(exchange_name)
+                        await asyncio.to_thread(reconcile_trades, adapter, trades)
+                    except Exception as e:
+                        logger.error(f"Tracker error for {exchange_name}: {e}")
+
+        except Exception as e:
+            logger.error(f"Tracker loop error: {e}")
+        await asyncio.sleep(30)
 
 
 @asynccontextmanager
@@ -97,16 +136,20 @@ async def lifespan(app: FastAPI):
 
     guardian_task = asyncio.create_task(guardian_loop())
     logger.info("Position Guardian started")
+    tracker_task = asyncio.create_task(tracker_loop())
+    logger.info("Trade Outcome Tracker started")
 
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────────────
     guardian_task.cancel()
-    try:
-        await guardian_task
-    except asyncio.CancelledError:
-        pass
-    logger.info("Position Guardian stopped")
+    tracker_task.cancel()
+    for task in [guardian_task, tracker_task]:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Position Guardian and Trade Outcome Tracker stopped")
 
 
 app = FastAPI(title="QuantAgent Dashboard API", version="1.0.0", lifespan=lifespan)
@@ -123,7 +166,23 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "version": __version__,
+        "version_date": __version_date__,
+        "version_full": __version_full__,
+        "phase": __phase__,
+    }
+
+
+@app.get("/api/version")
+def get_version():
+    from version import VERSION_HISTORY
+    return {
+        "current": __version_full__,
+        "phase": __phase__,
+        "history": VERSION_HISTORY,
+    }
 
 
 # ── Performance analytics (existing, now with optional bot_id + mode filters) ─
@@ -142,11 +201,83 @@ def _filter_enriched_by_mode(enriched: list[dict], mode: str) -> list[dict]:
 
 @app.get("/api/overview", response_model=OverviewResponse)
 def overview(bot_id: str = Query(""), mode: str = Query("all")):
+    # Prefer SQLite trades table (real data); fall back to JSONL (estimated)
+    sqlite_trades = get_trades(
+        status="closed",
+        bot_id=bot_id or None,
+        mode=mode if mode != "all" else None,
+        limit=10000,
+    )
+    if sqlite_trades:
+        daily_pnl_val = get_daily_pnl(bot_id=bot_id or None, mode=mode if mode != "all" else None)
+        open_count = len(get_open_trades(bot_id=bot_id or None))
+        result = compute_overview_sqlite(sqlite_trades, daily_pnl=daily_pnl_val, open_count=open_count)
+        return OverviewResponse(**result)
+
+    # Fallback: JSONL-based estimates
     enriched = get_all_enriched()
     if bot_id:
         enriched = _filter_enriched_by_bot(enriched, bot_id)
     enriched = _filter_enriched_by_mode(enriched, mode)
-    return compute_overview(enriched)
+    result = compute_overview(enriched)
+    return OverviewResponse(**result, daily_pnl=0.0, open_trades=0)
+
+
+_EXIT_REASON_TO_TYPE = {
+    "stop_loss": "sl",
+    "take_profit": "tp",
+    "time_exit": "time",
+    "manual": "unknown",
+    "guardian": "unknown",
+    "monitor": "unknown",
+    "unknown": "unknown",
+}
+
+
+def _sqlite_trade_to_record(t: dict) -> TradeRecord:
+    """Convert a SQLite trade row to a TradeRecord."""
+    exit_reason = t.get("exit_reason") or ""
+    exit_type = _EXIT_REASON_TO_TYPE.get(exit_reason, "unknown")
+    entry_price = float(t.get("entry_fill_price") or t.get("entry_price") or 0)
+    exit_price = float(t["exit_price"]) if t.get("exit_price") is not None else None
+    realized_pnl = float(t["realized_pnl"]) if t.get("realized_pnl") is not None else 0.0
+    pnl_pct = round((realized_pnl / float(t["position_size_usd"])) * 100, 4) if t.get("position_size_usd") else 0.0
+
+    # Duration as human-readable string
+    entry_time = t.get("entry_time") or t.get("created_at", "")
+    exit_time = t.get("exit_time")
+
+    return TradeRecord(
+        timestamp=entry_time,
+        symbol=t.get("symbol", ""),
+        direction=t.get("direction", ""),
+        entry_price=entry_price,
+        stop_loss=float(t.get("stop_loss") or 0),
+        take_profit=float(t.get("take_profit") or 0),
+        exit_price=exit_price,
+        pnl=realized_pnl,
+        pnl_pct=pnl_pct,
+        exit_type=exit_type,
+        exit_reason=exit_reason,
+        rr_ratio=float(t.get("risk_reward_ratio") or 1.5),
+        atr_value=t.get("atr_value"),
+        sl_distance=None,
+        justification=t.get("decision_reasoning") or "",
+        order_id=t.get("entry_order_id") or "",
+        status=t.get("status", "open"),
+        estimated=False,
+        agreement_level=f"{round(float(t['agreement_score']))/1:.0f}/3" if t.get("agreement_score") else "0/3",
+        bot_name=t.get("bot_name") or "unknown",
+        bot_id=t.get("bot_id") or "",
+        position_size_usd=float(t.get("position_size_usd") or 0),
+        quantity=float(t.get("quantity") or 0),
+        trading_mode=t.get("trading_mode") or "paper",
+        exchange=t.get("exchange") or "",
+        entry_time=entry_time,
+        exit_time=exit_time,
+        fees_total=float(t.get("fees_total") or 0),
+        cycle_cost=float(t.get("cycle_cost") or 0),
+    )
 
 
 @app.get("/api/trades", response_model=TradesResponse)
@@ -160,6 +291,29 @@ def trades(
     bot_name: str = Query(""),
     mode: str = Query("all"),
 ):
+    # Prefer SQLite trades table (real data); fall back to JSONL (estimated)
+    sqlite_all = get_trades(
+        bot_id=bot_id or None,
+        mode=mode if mode != "all" else None,
+        limit=10000,
+    )
+    if sqlite_all:
+        filtered = sqlite_all
+        if symbol:
+            filtered = [t for t in filtered if symbol.lower() in (t.get("symbol") or "").lower()]
+        if direction:
+            filtered = [t for t in filtered if (t.get("direction") or "").upper() == direction.upper()]
+        if exit_type:
+            filtered = [t for t in filtered if _EXIT_REASON_TO_TYPE.get(t.get("exit_reason", ""), "unknown") == exit_type.lower()]
+        if bot_name:
+            filtered = [t for t in filtered if (t.get("bot_name") or "unknown") == bot_name]
+
+        total = len(filtered)
+        page = filtered[offset: offset + limit]
+        records = [_sqlite_trade_to_record(t) for t in page]
+        return TradesResponse(trades=records, total=total, offset=offset, limit=limit)
+
+    # Fallback: JSONL-based estimates
     enriched = get_all_enriched()
     if bot_id:
         enriched = _filter_enriched_by_bot(enriched, bot_id)
@@ -237,6 +391,16 @@ def breakdown(
         enriched = _filter_enriched_by_bot(enriched, bot_id)
     enriched = _filter_enriched_by_mode(enriched, mode)
     rows = compute_breakdown(enriched, dimension)
+
+    # For bot dimension, enrich with API cost data
+    if dimension == "bot":
+        cost_data = get_api_cost_stats(bot_id=bot_id or None)
+        cost_by_name = {v["name"]: v["cost"] for v in cost_data.get("by_bot", {}).values()}
+        for row in rows:
+            api_cost = cost_by_name.get(row["group"], 0.0)
+            row["api_cost"] = round(api_cost, 4)
+            row["net_pnl"] = round(row["total_pnl"] - api_cost, 4)
+
     return {"dimension": dimension, "data": rows}
 
 
@@ -273,7 +437,7 @@ def config():
             atr_multiplier=1.5,
             forecast_candles=3,
             lookback_bars=100,
-            symbol="BTCUSDT",
+            symbol="BTC-USDC",
             timeframe="1h",
             model_name="unknown",
             langsmith_enabled=False,
@@ -519,6 +683,99 @@ def api_internal_trade(payload: InternalTradePayload):
     if pnl is not None and float(pnl) < 0:
         increment_daily_loss(payload.bot_id, abs(float(pnl)))
     return {"ok": True}
+
+
+@app.post("/api/internal/cycle-cost")
+async def record_cycle_cost_endpoint(data: dict):
+    """Called by bot workers after each cycle to log API token costs."""
+    create_cycle_cost(data)
+
+    # If a trade was executed this cycle, link the cost to the most recently
+    # opened trade for this bot+symbol so the trade log table can show per-trade cost.
+    if data.get("had_trade") and data.get("bot_id") and data.get("total_cost"):
+        bot_id = data["bot_id"]
+        symbol = data.get("symbol", "")
+        open_trades = get_open_trades(bot_id=bot_id)
+        matching = [t for t in open_trades if t["symbol"] == symbol] if symbol else open_trades
+        if matching:
+            update_trade_cycle_cost(matching[0]["id"], float(data["total_cost"]))
+
+    return {"ok": True}
+
+
+@app.post("/api/internal/trade/open")
+async def record_trade_open(trade_data: dict):
+    """Called by bot workers when a trade is opened. Records to SQLite."""
+    trade = create_trade(trade_data)
+    return trade
+
+
+@app.post("/api/internal/trade/close")
+async def record_trade_close(data: dict):
+    """Called by position monitor or tracker when a trade is closed."""
+    trade_id = data.get("trade_id")
+    if not trade_id:
+        # Find by bot_id + symbol + status=open
+        bot_id = data.get("bot_id")
+        symbol = data.get("symbol")
+        open_trades = get_open_trades(bot_id=bot_id)
+        if symbol:
+            matching = [t for t in open_trades if t["symbol"] == symbol]
+        else:
+            matching = open_trades  # fallback: use first open trade for this bot
+        if matching:
+            trade_id = matching[0]["id"]
+        else:
+            raise HTTPException(status_code=404, detail="No matching open trade found")
+
+    trade = close_trade(trade_id, data)
+
+    # Update daily loss if this is a losing trade
+    realized_pnl = data.get("realized_pnl")
+    bot_id = data.get("bot_id") or (trade or {}).get("bot_id")
+    if realized_pnl is not None and float(realized_pnl) < 0 and bot_id:
+        increment_daily_loss(bot_id, abs(float(realized_pnl)))
+
+    return trade
+
+
+# ── Stats endpoints ───────────────────────────────────────────────────────────
+
+@app.get("/api/stats/api-costs")
+def api_costs_stats(bot_id: str = Query(""), days: int = Query(None)):
+    """Return API cost statistics aggregated from all recorded trading cycles."""
+    return get_api_cost_stats(bot_id=bot_id or None, days=days)
+
+
+@app.get("/api/debug/trades")
+def debug_trades():
+    """Show raw trade data for debugging P&L. Returns last 10 trades."""
+    from database import _get_conn
+    with _get_conn() as conn:
+        rows = conn.execute("""
+            SELECT id, symbol, direction,
+                   entry_price, entry_fill_price,
+                   exit_price, exit_reason,
+                   position_size_usd, quantity,
+                   realized_pnl, status
+            FROM trades
+            ORDER BY created_at DESC LIMIT 10
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.get("/api/stats/daily-pnl")
+def api_daily_pnl(mode: str = Query("all")):
+    """Return today's realized P&L per bot, for bot card display."""
+    from database import get_all_bots as _get_bots
+    bots = _get_bots()
+    result = {}
+    for bot in bots:
+        result[bot["id"]] = get_daily_pnl(
+            bot_id=bot["id"],
+            mode=mode if mode != "all" else None,
+        )
+    return result
 
 
 # ── Guardian ──────────────────────────────────────────────────────────────────

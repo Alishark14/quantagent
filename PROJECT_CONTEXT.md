@@ -1,7 +1,7 @@
 # PROJECT_CONTEXT.md — QuantAgent
 
 > Paste this into any new Claude/AI chat session to restore full project context.
-> Last updated: 2026-04-02
+> Last updated: 2026-04-02 (v6)
 
 ---
 
@@ -13,6 +13,17 @@ The system is evolving into a **bot management platform** where multiple indepen
 
 **Paper link:** https://arxiv.org/abs/2509.09995v3
 **Original paper repo:** https://github.com/Y-Research-SBU/QuantAgent
+
+### Symbol Convention
+
+Internal symbols use `BASE-QUOTE` format matching exchange reality:
+- **Crypto (Hyperliquid/dYdX):** `BTC-USDC`, `ETH-USDC`, `SOL-USDC`, `DOGE-USDC`, `AVAX-USDC`, `LINK-USDC`, `HYPE-USDC`
+- **HIP-3 Commodities (Hyperliquid only):** `GOLD-USDC`, `SILVER-USDC`, `WTIOIL-USDC`, `BRENTOIL-USDC`, `NATGAS-USDC`, `COPPER-USDC`, `PLATINUM-USDC`, `PALLADIUM-USDC`, `URANIUM-USDC`, `WHEAT-USDC`, `CORN-USDC`, `ALUMINIUM-USDC`
+- **HIP-3 Indices:** `SP500-USDC`, `JP225-USDC`, `VIX-USDC`, `DXY-USDC`
+- **HIP-3 Stocks:** `TSLA-USDC`, `NVDA-USDC`, `AAPL-USDC`, `META-USDC`, `MSFT-USDC`, `GOOGL-USDC`, `AMZN-USDC`, `AMD-USDC`, `NFLX-USDC`, `PLTR-USDC`, `COIN-USDC`, `MSTR-USDC`
+- **HIP-3 Forex:** `EUR-USDC`, `JPY-USDC`
+
+CCXT format: regular perps = `BTC/USDC:USDC`; HIP-3 markets = `XYZ-GOLD/USDC:USDC` (XYZ deployer prefix). All HIP-3 API calls require `{"dex": "xyz"}` param. OHLCV data: crypto from Bybit (`BTC/USDT`); HIP-3 from Hyperliquid directly with `dex` param. Legacy `BTCUSDT` format handled for backward-compat.
 
 ---
 
@@ -60,6 +71,7 @@ The system is evolving into a **bot management platform** where multiple indepen
 ```
 quantagent/
 ├── main.py                     # Entry point — CLI args, scheduler, cycle runner
+├── version.py                  # SemVer + calendar version, MODEL_COSTS pricing dict, VERSION_HISTORY
 ├── graph.py                    # LangGraph workflow definition (fan-out/fan-in)
 ├── state.py                    # QuantAgentState TypedDict (shared graph state)
 ├── config.py                   # Configuration from env vars
@@ -91,21 +103,22 @@ quantagent/
 │   ├── indicators.py           # Technical indicator computation (pandas-ta)
 │   ├── charts.py               # Candlestick + trendline chart generation (matplotlib)
 │   ├── llm.py                  # Claude API wrapper (text + vision, run_name for LangSmith)
-│   └── position_sizer.py       # Volatility + agent agreement position sizing
+│   ├── position_sizer.py       # Volatility + agent agreement position sizing
+│   └── trade_outcome_tracker.py # Reconciles open trades vs exchange fills, updates SQLite
 │
 ├── trade_logs/                 # Auto-created, per-mode and per-symbol
 │   ├── live/
-│   │   ├── btc/
-│   │   └── eth/
+│   │   ├── btc-usdc/
+│   │   └── eth-usdc/
 │   └── paper/
-│       ├── btc/
-│       └── eth/
+│       ├── btc-usdc/
+│       └── eth-usdc/
 │
 ├── dashboard/
 │   ├── backend/
 │   │   ├── app.py              # FastAPI server (:8001)
 │   │   ├── models.py           # Pydantic request/response models
-│   │   ├── database.py         # SQLite bot config + trades DB
+│   │   ├── database.py         # SQLite bot config + trades + cycle_costs DB (WAL mode)
 │   │   ├── process_manager.py  # Spawn/kill bot worker processes
 │   │   ├── trade_analyzer.py   # P&L, equity curve, Sharpe, drawdown computation
 │   │   └── requirements.txt
@@ -227,14 +240,19 @@ Each bot has these configurable fields:
 - Bots report heartbeats and trades back to dashboard API via HTTP POST
 - On server restart, stale "running" statuses are cleaned up
 
+### Trades Table (SQLite)
+Real trade records with entry/exit fill prices, realized P&L, fees, and exit reasons. Source of truth for all dashboard analytics once populated. Falls back to JSONL estimates if empty.
+
+Key fields: `id`, `bot_id`, `symbol`, `direction`, `entry_fill_price`, `exit_price`, `realized_pnl`, `fees_total`, `exit_reason`, `status` (open/closed), `trading_mode`, `exchange`.
+
 ### Dashboard Pages
-1. **Bots** (command center): Card grid of all bots with status, actions (start/stop/edit/delete), emergency kill-all
-2. **Bot Detail**: Per-bot deep dive with Live Log tab (WebSocket real-time streaming), Trades tab, Performance tab (equity curve + agent accuracy)
-3. **Overview**: KPI cards + equity curve + recent trades (filterable by bot + global Paper/Live filter)
-4. **Trades**: Full sortable/filterable trade log with P&L + Size column (USD + quantity)
+1. **Bots** (command center): Card grid with status, actions, real daily P&L per bot (from trades table via `GET /api/stats/daily-pnl`)
+2. **Bot Detail**: Per-bot deep dive with Live Log tab (WebSocket real-time streaming), Trades tab, Performance tab
+3. **Overview**: KPI cards (Total P&L, Daily P&L, Daily API Cost, Net P&L, Win Rate, Sharpe) + equity curve + recent trades
+4. **Trades**: Full sortable/filterable trade log with Status, Size, Exit Reason, Duration columns; real P&L from SQLite
 5. **Agents**: Per-agent accuracy, agreement vs win rate analysis
 6. **Breakdown**: Performance by asset, timeframe, direction, exchange, or bot (dynamic dimensions)
-7. **Settings**: Exchange connection status + balances, API services (Anthropic + LangSmith), system info
+7. **Settings**: Exchange connections + balances, API services, **API Cost Analytics** section (total spend, cycles run, avg cost/cycle, per-agent breakdown with progress bars, monthly estimate), system info with live version from `/api/health`
 
 ### Global Filter
 All analytics pages share a global Paper/Live/All toggle (in the header). Implemented via `GlobalFilterContext` React context. Every analytics API call passes the `mode` query param. Backend filters `trading_mode` field from `trade_summary.jsonl`.
@@ -270,7 +288,7 @@ All analytics pages share a global Paper/Live/All toggle (in the header). Implem
 - Chart generation for vision agents (candlestick + trendlines)
 - Claude Sonnet integration (text + vision calls)
 - LangSmith integration with per-agent run names and per-bot project separation
-- Token usage tracking per agent ($3/$15 per 1M cost reporting)
+- Token usage tracking per agent — per-cycle cost logged to SQLite `cycle_costs` table; `MODEL_COSTS` dict in `version.py` drives pricing (easy to update for new models)
 - **dYdX v4 testnet execution** — on-chain orders confirmed (tx hash verified). IOC limit orders for market entry/close, conditional limit orders with `stopLossPrice`/`takeProfitPrice` for SL/TP. Fixed 4 CCXT testnet bugs (auth, pub_key, atomicResolution int type, no-market-order)
 - Exchange factory: switchable via `--exchange` CLI or `EXCHANGE` env var
 - Trade logging (JSONL + per-trade JSON files, bot_id/bot_name embedded)
@@ -290,6 +308,14 @@ All analytics pages share a global Paper/Live/All toggle (in the header). Implem
 - Breakdown page: dynamic dimensions (asset/timeframe/direction/exchange/bot)
 - Fixed: `guardian_loop` and `emergency_close` in app.py now use adapter instead of removed `get_exchange_client`
 - Fixed: `_filter_enriched_by_bot` now reads `t.get("bot_id")` (top-level) not `t["trade"].get("bot_id")`
+- Trade Outcome Tracker: `utils/trade_outcome_tracker.py` reconciles SQLite open trades vs exchange fills every 30 seconds; closes trades with real exit price + P&L + fees
+- SQLite trades table: new `trades` table in `database.py` (WAL mode, 7 CRUD functions); source of truth for P&L once populated; JSONL remains as fallback/audit
+- Real P&L in dashboard: `/api/overview` and `/api/trades` prefer SQLite; fall back to JSONL if empty. `KPICards` now shows Daily P&L + Open Trades; removed "estimated" label
+- TradeLogTable: new Status (open/closed dot), Exit Reason (SL/TP/Time/Manual/Guardian), Duration columns
+- Bot cards: real daily P&L from `GET /api/stats/daily-pnl` (per-bot, from trades table)
+- Trade recording pipeline: `execution.py` POSTs to `/api/internal/trade/open`; `position_monitor.py` POSTs to `/api/internal/trade/close` with realized P&L
+- **Software versioning**: `version.py` at project root — SemVer + calendar format (`v0.5.0 (2026.04.02)`), `VERSION_HISTORY` list, `MODEL_COSTS` pricing dict per model, `/api/health` returns version, `/api/version` returns history. Main banner updated to show version + phase.
+- **API cost tracking**: Per-cycle costs logged to `cycle_costs` SQLite table via `POST /api/internal/cycle-cost` (called from `main.py` after every run_analysis). `GET /api/stats/api-costs` returns total/daily spend, cycles run, per-agent breakdown with percentages. Header shows daily API cost + cycle count. Overview adds Daily API Cost + Net P&L KPI cards. BotCards show per-bot API cost. TradeLogTable adds Cost column (cycle cost linked to trade). Settings shows full cost analytics with progress bars. BreakdownView adds API Cost + Net P&L columns in bot dimension.
 
 ### 🔧 In Progress
 - Safety layer: daily loss cap, cooldown after consecutive losses, min position enforcement (config fields exist; enforcement logic not yet implemented)
@@ -309,7 +335,8 @@ All analytics pages share a global Paper/Live/All toggle (in the header). Implem
 2. **dYdX v4 does not support reduce-only conditional orders** — Resolved: `utils/position_monitor.py` polls price every 5s and fires IOC close orders when SL, TP, or time limit is hit.
 3. **dYdX order precision** — Resolved: price precision is 1.0 (whole dollars), amount precision is 0.0001 (4dp). Fixed by calling `exchange.price_to_precision()` / `amount_to_precision()`.
 4. **dYdX indexer REST order book is stale** — The `/v4/orderbooks/perpetualMarket/BTC-USD` indexer endpoint lags behind the real on-chain state. `exchange.fetch_order_book()` (node REST) reflects the actual matching engine state. Always use CCXT's method for order pricing.
-5. **Trade outcome tracking**: P&L is estimated (55% TP hit rate assumption). Actual exit prices are not fetched from the exchange. Need TradeOutcomeTracker polling CCXT for closed positions.
+5. **Trade outcome tracking**: Now implemented. Real P&L recorded via `execution.py` → `/api/internal/trade/open` and `position_monitor.py` → `/api/internal/trade/close`. `TradeOutcomeTracker` reconciles any orphaned open trades every 30s. Dashboard shows real realized P&L when SQLite has data; falls back to JSONL estimates if empty.
+6. **JSONL P&L estimates only valid for managed bots**: JSONL fallback analytics (`/api/agents`, `/api/breakdown`, `/api/exits`) always use JSONL estimates regardless of SQLite data. Estimated `exit_type` is seeded-random (55% TP). P&L calculation bug fixed (now multiplies by quantity). For accurate analytics, always run as managed bot so trades land in SQLite.
 
 ---
 
@@ -372,7 +399,7 @@ Key variables (set by process_manager or CLI — see `config.py:TradingConfig` f
 
 | Variable | Default | Source |
 |----------|---------|--------|
-| `SYMBOL` | `BTCUSDT` | CLI `--symbol` or dashboard |
+| `SYMBOL` | `BTC-USDC` | CLI `--symbol` or dashboard |
 | `TIMEFRAME` | `1h` | CLI `--timeframe` or dashboard |
 | `EXCHANGE` | `dydx` | CLI `--exchange` or dashboard |
 | `EXCHANGE_TESTNET` | `true` | CLI `--testnet/--mainnet` or dashboard |
@@ -388,16 +415,16 @@ Key variables (set by process_manager or CLI — see `config.py:TradingConfig` f
 
 ```bash
 # Single analysis, dry run (safe first test)
-python main.py --once --dry-run --symbol BTCUSDT
+python main.py --once --dry-run --symbol BTC-USDC
 
 # Single analysis with testnet execution on dYdX
-python main.py --once --exchange dydx --symbol BTCUSDT
+python main.py --once --exchange dydx --symbol BTC-USDC
 
 # Custom budget, timeframe, risk params
 python main.py --once --exchange dydx --budget 1000 --timeframe 15m --atr-multiplier 2.0
 
 # Scheduled execution (runs every timeframe interval)
-python main.py --symbol BTCUSDT ETHUSDT
+python main.py --symbol BTC-USDC ETH-USDC
 
 # Dashboard backend
 cd dashboard/backend && uvicorn app:app --host 0.0.0.0 --port 8001 --reload
@@ -437,11 +464,11 @@ cd dashboard/frontend && npm run dev
 
 > Claude Code: update this section after every significant task. Keep only the last 5 entries. Newest on top. Include: what changed, which files were modified, and any new decisions made.
 
-- **2026-04-02:** Major dashboard improvements. (1) WebSocket live log streaming: new `/ws/bots/{id}/logs` endpoint tails `trade_logs/{mode}/{symbol}/bot.log`; BotDetail now has Live Log tab (default) with terminal-style display + color coding + pause/clear controls. (2) Global Paper/Live/All filter in header via `GlobalFilterContext`; all analytics endpoints gain `mode` param; `execution.py` logs `trading_mode` in JSONL. (3) Trade Size column in TradeLogTable (USD + quantity). (4) Settings page replaced: shows exchange connection status + balances via `GET /api/settings/exchanges`. (5) Breakdown page: added Exchange + Bot dimensions. (6) Fixed critical bugs: guardian_loop no longer imports removed `get_exchange_client`; emergency-close uses adapter; `_filter_enriched_by_bot` reads top-level `bot_id`.
-- **2026-04-01:** Refactored to pluggable exchange adapter system, added Hyperliquid. Created `exchanges/` directory with `base.py` (abstract interface), `factory.py` (singleton cache), `dydx_adapter.py` (all 4 CCXT bug fixes moved here), `hyperliquid_adapter.py` (native SL/TP, no position monitor needed), `deribit_adapter.py`. Rewrote `execution.py` — zero ccxt imports, fully exchange-agnostic. Updated `position_guardian.py` to use `adapter.get_open_positions()` and `adapter.close_position()`. Added `HYPERLIQUID_WALLET_ADDRESS`/`HYPERLIQUID_PRIVATE_KEY` to `config.py` and `.env.example`. Added Hyperliquid to dashboard exchange dropdown. Created `test_exchange_adapter.py` smoke-test script.
-- **2026-04-01:** Updated position sizing defaults to match one-position-at-a-time strategy. `MAX_CONCURRENT_POSITIONS` 3→1, `MAX_POSITION_PCT` 0.5→1.0 in config.py, database.py (schema + migration + create_bot dict), and BotModal.tsx (defaults + slider max extended to 1.0). Math: $500 budget ÷ 1 ÷ 1 = $500 base; vol-adj + full-agreement capped at 100% = $500. ATR stop-loss controls the actual risk.
-- **2026-04-01:** Fixed per-symbol position check. `has_open_position_dydx` was checking ALL markets on the account — a BTC SHORT would block an ETH bot from trading. Now accepts a `symbol` param (e.g. "ETHUSDT"), converts to dYdX market ID ("ETH-USD"), and only checks that specific market. `has_open_position` passes `Config.SYMBOL` (raw format) rather than the exchange symbol.
-- **2026-04-01:** Fixed EXCHANGE_TESTNET type mismatch (mainnet bug). SQLite stores `exchange_testnet` as integer (1/0); `config.py` only accepted "true"/"false" strings, so bots always connected to mainnet. Fix: `config.py` now accepts "true"/"1"/"yes"; `process_manager.py` now passes "true"/"false" strings explicitly. All existing bots deleted and recreated fresh.
+- **2026-04-02 (v9):** Fixed critical P&L calculation bug in JSONL analytics path. `trade_analyzer.compute_pnl()` was returning raw price difference (`stop_loss - entry = -$691`) instead of dollar P&L (`price_diff × quantity = -$0.28`). Also fixed `enrich_trade()` `pnl_pct` — was dividing by entry price ($67k) instead of `position_size_usd` ($25). Added P&L sanity checks in `compute_pnl`, `_compute_pnl` (tracker), and `close_trade` (DB): warns/errors if `abs(pnl) > position_size_usd × 2/5`. Added `/api/debug/trades` endpoint to inspect raw DB trade values.
+- **2026-04-02 (v8):** Hyperliquid adapter: fail-fast wallet registration check. Added `fetch_balance()` auth probe in `connect()` after `load_markets()`. Catches "does not exist" error and raises `ConnectionError` with testnet/mainnet registration URL before any LLM agents run (previously wasted ~$0.033/cycle before failing mid-execution).
+- **2026-04-02 (v7):** Fixed Hyperliquid adapter bugs. (1) `extra or None` pattern: empty `{}` is falsy so CCXT received `None` instead of `{}` — fixed in `get_current_price`, `has_open_position`, `cancel_all_orders` (2 occurrences). (2) OHLCV fallback crash: `fetch_ohlcv` returning empty list caused `IndexError` on `[-1]` — now checks `if ohlcv and len(ohlcv) > 0` before indexing, raises `ValueError` with clear message otherwise. (3) `has_open_position` now uses `or []` guard on `fetch_positions` response in case `None` is returned.
+- **2026-04-02 (v6):** Software versioning + API cost tracking. Created `version.py` (`__version_full__`, `__phase__`, `MODEL_COSTS` dict, `compute_cycle_cost()`, `VERSION_HISTORY`). `main.py` banner now shows version/phase; token pricing uses `MODEL_COSTS`. New `cycle_costs` SQLite table stores per-cycle API cost breakdown per agent. `main.py` POSTs to `/api/internal/cycle-cost` after every cycle (bot processes only). `/api/stats/api-costs` endpoint aggregates totals, per-agent pct, by-bot, monthly estimate. `/api/health` now returns version fields; `/api/version` returns full history. Frontend: Header shows daily API cost + cycles; Overview adds Daily API Cost + Net P&L KPI cards; BotCards show per-bot API cost; TradeLogTable adds Cost column; Settings gains API Cost Analytics section with agent progress bars; BreakdownView adds API Cost + Net P&L columns for bot dimension.
+- **2026-04-02 (v5):** Hyperliquid HIP-3 market support. Added 30+ non-crypto instruments (commodities, indices, stocks, forex via XYZ deployer). `SYMBOL_MAP` expanded with `XYZ-GOLD/USDC:USDC`-style CCXT symbols. `HIP3_SYMBOLS` set tracks which symbols need `dex='xyz'` param. `connect()` now loads HIP-3 markets via `fetch_markets({'hip3': True})` alongside regular perps. `_get_hip3_params()` helper injects `dex` param into all order/position/cancel calls. `get_open_positions()` fetches both perp and HIP-3 positions. `get_balance()` falls back to USDT0 for CASH dex. `data.py`: `DATA_SYMBOL_MAP` renamed to `BYBIT_SYMBOLS` (only crypto); HIP-3 symbols fetch OHLCV from Hyperliquid with `dex` param. `BotModal.tsx`: expanded to 6 groups (Crypto/Commodities/Indices/Stocks/Forex/Other) with HIP-3 label.
 
 ---
 
@@ -467,3 +494,7 @@ cd dashboard/frontend && npm run dev
 | 2026-04-01 | dYdX as primary exchange for both paper and live (replacing Deribit) | Deribit testnet unreliable for testing (different order type semantics, legacy API). dYdX v4 is USDC-margined (simpler math), decentralized (no NL issues), same testnet/mainnet codebase. On-chain orders confirmed working on testnet. |
 | 2026-04-01 | Pluggable adapter system over CCXT abstraction | CCXT provides API unification but not behavioral unification (dYdX needs IOC, Deribit needs native SL/TP, Hyperliquid has both). Adapter pattern hides these differences behind a single interface. Adding a new exchange = one new file, zero changes to core engine. |
 | 2026-04-01 | Position monitor receives raw CCXT client (not adapter) | `position_monitor._close_position` already has dYdX IOC logic checking `exchange.id`. Passing `adapter.get_exchange_client()` (raw CCXT) preserves this without rewriting the monitor. Re-evaluate if a third monitor-dependent exchange is added. |
+| 2026-04-02 | SQLite trades table as P&L source of truth, replacing JSONL estimates | JSONL records only entry data; exit prices and realized P&L were estimated at 55% TP rate. SQLite tracks the full lifecycle (open → closed) with real fill prices from position_monitor and TradeOutcomeTracker. JSONL kept as audit trail and fallback when trades table is empty. |
+| 2026-04-02 | TradeOutcomeTracker runs in dashboard backend, not as separate process | Same rationale as Guardian: always active when dashboard is up; exchange already has SL/TP orders for protection if tracker is down. 30s interval staggers with Guardian (60s) to avoid simultaneous exchange API calls. |
+| 2026-04-02 | MODEL_COSTS in version.py, not config.py | Version file is the natural home for both version metadata and model pricing since they're both "static facts about the project" that need updating together when adding new models. |
+| 2026-04-02 | cycle_costs table separate from trades table | Not every cycle results in a trade. Costs are incurred regardless — keeping them separate allows querying cost-per-cycle metrics independently of trade P&L. |

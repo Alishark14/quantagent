@@ -144,6 +144,42 @@ def execute_trade_node(state: dict) -> dict:
             f"Entry order placed: {order_id} | status: {entry_result.status}"
         )
 
+        # ── Record trade in SQLite via dashboard API ───────────────────────────
+        import os as _os
+        _bot_id = _os.getenv("BOT_ID", "")
+        if _bot_id:
+            try:
+                import requests as _req
+                _req.post(
+                    "http://localhost:8001/api/internal/trade/open",
+                    json={
+                        "bot_id": _bot_id,
+                        "bot_name": _os.getenv("BOT_NAME", "manual"),
+                        "symbol": symbol,
+                        "direction": direction,
+                        "entry_price": current_price,
+                        "entry_order_id": order_id,
+                        "entry_fill_price": entry_result.price,
+                        "position_size_usd": position_size_usd,
+                        "quantity": quantity,
+                        "stop_loss": stop_loss,
+                        "take_profit": take_profit,
+                        "atr_value": decision.get("atr"),
+                        "risk_reward_ratio": decision.get("risk_reward_ratio"),
+                        "indicator_signal": state.get("indicator_signal", ""),
+                        "pattern_signal": state.get("pattern_signal", ""),
+                        "trend_signal": state.get("trend_signal", ""),
+                        "agreement_score": state.get("sizing_details", {}).get("agreement_score"),
+                        "decision_reasoning": decision.get("justification", ""),
+                        "exchange": exchange_name,
+                        "trading_mode": Config.TRADING_MODE,
+                        "timeframe": state.get("timeframe", Config.TIMEFRAME),
+                    },
+                    timeout=5,
+                )
+            except Exception:
+                pass  # Don't fail the trade if dashboard is down
+
         # ── SL / TP ───────────────────────────────────────────────────────────
         if adapter.supports_native_sl_tp():
             # Exchange handles SL/TP natively (Hyperliquid, Deribit)
@@ -199,9 +235,10 @@ def execute_trade_node(state: dict) -> dict:
             start_position_monitor(
                 exchange=adapter.get_exchange_client(),
                 symbol=exchange_symbol,
+                raw_symbol=symbol,
                 direction=direction,
                 amount=quantity,
-                entry_price=current_price,
+                entry_price=entry_result.price if entry_result.price else current_price,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 timeframe=state.get("timeframe", Config.TIMEFRAME),

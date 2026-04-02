@@ -13,7 +13,7 @@ type FormData = Required<BotCreate>
 
 const DEFAULTS: FormData = {
   name: '',
-  symbol: 'BTCUSDT',
+  symbol: 'BTC-USDC',
   market_type: 'perpetual',
   timeframe: '1h',
   budget_usd: 500,
@@ -103,6 +103,34 @@ function Select({
         <option key={o.value} value={o.value} className="bg-[#1a1d26]">
           {o.label}
         </option>
+      ))}
+    </select>
+  )
+}
+
+function GroupedSelect({
+  value,
+  onChange,
+  groups,
+}: {
+  value: string
+  onChange: (v: string) => void
+  groups: { label: string; options: { value: string; label: string }[] }[]
+}) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="w-full bg-[#1a1d26] border border-[#2d3039] rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+    >
+      {groups.map(g => (
+        <optgroup key={g.label} label={g.label} className="bg-[#1a1d26] text-text-muted">
+          {g.options.map(o => (
+            <option key={o.value} value={o.value} className="bg-[#1a1d26]">
+              {o.label}
+            </option>
+          ))}
+        </optgroup>
       ))}
     </select>
   )
@@ -219,8 +247,23 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
+  const KNOWN_SYMBOLS = [
+    // Crypto
+    'BTC-USDC', 'ETH-USDC', 'SOL-USDC', 'DOGE-USDC', 'AVAX-USDC', 'LINK-USDC', 'HYPE-USDC',
+    // Commodities
+    'GOLD-USDC', 'SILVER-USDC', 'WTIOIL-USDC', 'BRENTOIL-USDC',
+    'NATGAS-USDC', 'COPPER-USDC', 'PLATINUM-USDC', 'PALLADIUM-USDC',
+    'URANIUM-USDC', 'WHEAT-USDC', 'CORN-USDC', 'ALUMINIUM-USDC',
+    // Indices
+    'SP500-USDC', 'JP225-USDC', 'VIX-USDC', 'DXY-USDC',
+    // Stocks
+    'TSLA-USDC', 'NVDA-USDC', 'AAPL-USDC', 'META-USDC', 'MSFT-USDC', 'GOOGL-USDC',
+    'AMZN-USDC', 'AMD-USDC', 'NFLX-USDC', 'PLTR-USDC', 'COIN-USDC', 'MSTR-USDC',
+    // Forex
+    'EUR-USDC', 'JPY-USDC',
+  ]
   const [customSymbol, setCustomSymbol] = useState(
-    !['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].includes(form.symbol)
+    !KNOWN_SYMBOLS.includes(form.symbol)
   )
   const [showAdvanced, setShowAdvanced] = useState(false)
 
@@ -270,11 +313,75 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
     if (e.target === e.currentTarget) onClose()
   }
 
-  const SYMBOL_OPTIONS = [
-    { value: 'BTCUSDT', label: 'BTCUSDT' },
-    { value: 'ETHUSDT', label: 'ETHUSDT' },
-    { value: 'SOLUSDT', label: 'SOLUSDT' },
-    { value: '__custom__', label: 'Custom…' },
+  const SYMBOL_GROUPS = [
+    {
+      label: 'Crypto',
+      options: [
+        { value: 'BTC-USDC',  label: 'BTC-USDC (Bitcoin)' },
+        { value: 'ETH-USDC',  label: 'ETH-USDC (Ethereum)' },
+        { value: 'SOL-USDC',  label: 'SOL-USDC (Solana)' },
+        { value: 'DOGE-USDC', label: 'DOGE-USDC (Dogecoin)' },
+        { value: 'AVAX-USDC', label: 'AVAX-USDC (Avalanche)' },
+        { value: 'LINK-USDC', label: 'LINK-USDC (Chainlink)' },
+        { value: 'HYPE-USDC', label: 'HYPE-USDC (Hyperliquid)' },
+      ],
+    },
+    {
+      label: 'Commodities (HIP-3)',
+      options: [
+        { value: 'GOLD-USDC',      label: 'GOLD-USDC (Gold)' },
+        { value: 'SILVER-USDC',    label: 'SILVER-USDC (Silver)' },
+        { value: 'WTIOIL-USDC',    label: 'WTIOIL-USDC (WTI Crude Oil)' },
+        { value: 'BRENTOIL-USDC',  label: 'BRENTOIL-USDC (Brent Crude)' },
+        { value: 'NATGAS-USDC',    label: 'NATGAS-USDC (Natural Gas)' },
+        { value: 'COPPER-USDC',    label: 'COPPER-USDC (Copper)' },
+        { value: 'PLATINUM-USDC',  label: 'PLATINUM-USDC (Platinum)' },
+        { value: 'PALLADIUM-USDC', label: 'PALLADIUM-USDC (Palladium)' },
+        { value: 'URANIUM-USDC',   label: 'URANIUM-USDC (Uranium)' },
+        { value: 'WHEAT-USDC',     label: 'WHEAT-USDC (Wheat)' },
+        { value: 'CORN-USDC',      label: 'CORN-USDC (Corn)' },
+        { value: 'ALUMINIUM-USDC', label: 'ALUMINIUM-USDC (Aluminium)' },
+      ],
+    },
+    {
+      label: 'Indices (HIP-3)',
+      options: [
+        { value: 'SP500-USDC', label: 'SP500-USDC (S&P 500)' },
+        { value: 'JP225-USDC', label: 'JP225-USDC (Nikkei 225)' },
+        { value: 'VIX-USDC',   label: 'VIX-USDC (Volatility Index)' },
+        { value: 'DXY-USDC',   label: 'DXY-USDC (Dollar Index)' },
+      ],
+    },
+    {
+      label: 'Stocks (HIP-3)',
+      options: [
+        { value: 'TSLA-USDC',  label: 'TSLA-USDC (Tesla)' },
+        { value: 'NVDA-USDC',  label: 'NVDA-USDC (Nvidia)' },
+        { value: 'AAPL-USDC',  label: 'AAPL-USDC (Apple)' },
+        { value: 'META-USDC',  label: 'META-USDC (Meta)' },
+        { value: 'MSFT-USDC',  label: 'MSFT-USDC (Microsoft)' },
+        { value: 'GOOGL-USDC', label: 'GOOGL-USDC (Google)' },
+        { value: 'AMZN-USDC',  label: 'AMZN-USDC (Amazon)' },
+        { value: 'AMD-USDC',   label: 'AMD-USDC (AMD)' },
+        { value: 'NFLX-USDC',  label: 'NFLX-USDC (Netflix)' },
+        { value: 'PLTR-USDC',  label: 'PLTR-USDC (Palantir)' },
+        { value: 'COIN-USDC',  label: 'COIN-USDC (Coinbase)' },
+        { value: 'MSTR-USDC',  label: 'MSTR-USDC (MicroStrategy)' },
+      ],
+    },
+    {
+      label: 'Forex (HIP-3)',
+      options: [
+        { value: 'EUR-USDC', label: 'EUR-USDC (Euro)' },
+        { value: 'JPY-USDC', label: 'JPY-USDC (Japanese Yen)' },
+      ],
+    },
+    {
+      label: 'Other',
+      options: [
+        { value: '__custom__', label: 'Custom symbol…' },
+      ],
+    },
   ]
 
   return (
@@ -315,24 +422,24 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                     <Input
                       value={form.symbol}
                       onChange={v => set('symbol', v.toUpperCase())}
-                      placeholder="e.g. XRPUSDT"
+                      placeholder="e.g. XRP-USDC"
                     />
                     <button
                       type="button"
-                      onClick={() => { setCustomSymbol(false); set('symbol', 'BTCUSDT') }}
+                      onClick={() => { setCustomSymbol(false); set('symbol', 'BTC-USDC') }}
                       className="text-xs text-text-muted hover:text-text-primary px-2"
                     >
                       ↩
                     </button>
                   </div>
                 ) : (
-                  <Select
+                  <GroupedSelect
                     value={form.symbol}
                     onChange={v => {
                       if (v === '__custom__') { setCustomSymbol(true); set('symbol', '') }
                       else set('symbol', v)
                     }}
-                    options={SYMBOL_OPTIONS}
+                    groups={SYMBOL_GROUPS}
                   />
                 )}
                 <ErrMsg msg={errors.symbol} />

@@ -39,7 +39,7 @@ export default function Trades({ refreshTick }: Props) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-text-primary text-lg font-semibold">Trade Log</h1>
-          <p className="text-text-muted text-xs mt-0.5">Executed trades only · P&amp;L estimated</p>
+          <p className="text-text-muted text-xs mt-0.5">Executed trades · P&amp;L from exchange</p>
         </div>
         <BotSelector value={botId} onChange={setBotId} />
       </div>

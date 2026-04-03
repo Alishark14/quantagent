@@ -74,7 +74,7 @@ export default function RecentTrades({ trades }: Props) {
     <div className="bg-bg-card border border-border rounded-lg p-5">
       <h2 className="text-text-primary text-sm font-semibold mb-4">
         Recent Trades
-        <span className="ml-2 text-text-muted text-xs font-normal">(P&amp;L estimated)</span>
+        <span className="ml-2 text-text-muted text-xs font-normal">(P&amp;L from exchange)</span>
       </h2>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

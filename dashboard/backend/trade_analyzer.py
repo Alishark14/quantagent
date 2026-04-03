@@ -100,10 +100,15 @@ def enrich_trade(trade_entry: dict) -> dict:
     decision = trade_entry.get("decision", {})
     status = trade.get("status", "failed")
 
-    # If no confirmed exit, treat as open regardless of stored status.
-    # This prevents JSONL-based trades from showing as "closed" before the
-    # exchange confirms the exit.
-    if not (trade.get("exit_price") or trade.get("exit_time")):
+    # CRITICAL: Only treat a trade as closed if there is CONFIRMED exit data.
+    # Require a non-zero exit_price, an exit_time, and a non-"unknown" exit_reason.
+    # Anything less means the exchange hasn't confirmed the closure — stay 'open'.
+    has_confirmed_exit = (
+        trade.get("exit_price") not in (None, 0, 0.0, "") and
+        trade.get("exit_time") not in (None, "") and
+        trade.get("exit_reason") not in (None, "", "unknown")
+    )
+    if not has_confirmed_exit:
         status = "open"
 
     if status not in ("executed", "open"):

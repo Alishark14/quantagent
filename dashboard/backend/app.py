@@ -86,6 +86,7 @@ async def guardian_loop() -> None:
 async def tracker_loop() -> None:
     """Run trade outcome reconciliation every 30 seconds."""
     await asyncio.sleep(15)  # Stagger with guardian (which starts at 10s)
+    cycle_count = 0
     while True:
         try:
             from utils.trade_outcome_tracker import reconcile_trades
@@ -104,6 +105,16 @@ async def tracker_loop() -> None:
                         await asyncio.to_thread(reconcile_trades, adapter, trades)
                     except Exception as e:
                         logger.error(f"Tracker error for {exchange_name}: {e}")
+
+            # Every 5 cycles (~2.5 minutes) do a full DB sync — fixes any
+            # trades wrongly marked 'closed' while position is still on exchange.
+            cycle_count += 1
+            if cycle_count % 5 == 0:
+                try:
+                    from utils.position_sync import sync_and_update_db
+                    await asyncio.to_thread(sync_and_update_db)
+                except Exception as e:
+                    logger.warning(f"DB sync error: {e}")
 
         except Exception as e:
             logger.error(f"Tracker loop error: {e}")
@@ -305,6 +316,12 @@ def trades(
         limit=10000,
     )
     if sqlite_all:
+        # Sync with exchange — fix any trades wrongly marked closed
+        try:
+            from utils.position_sync import sync_trade_statuses
+            sqlite_all = sync_trade_statuses(sqlite_all)
+        except Exception as _sync_err:
+            logger.warning(f"Position sync skipped: {_sync_err}")
         filtered = sqlite_all
         if symbol:
             filtered = [t for t in filtered if symbol.lower() in (t.get("symbol") or "").lower()]

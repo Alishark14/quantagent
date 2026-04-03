@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.7"
+__version__ = "0.5.8"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,19 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.8",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Exchange as Source of Truth",
+        "changes": [
+            "Add: utils/position_sync.py — get_cached_positions() with 30s TTL, sync_trade_statuses() (in-memory fix), sync_and_update_db() (DB fix for wrongly-closed trades)",
+            "Fix: tracker_loop() calls sync_and_update_db() every 5 cycles (~2.5 min) — reopens trades where position is still live on exchange",
+            "Fix: /api/trades syncs with exchange before returning — user always sees correct status",
+            "Fix: enrich_trade() in trade_analyzer.py stricter confirmed-exit check — requires exit_price + exit_time + exit_reason != 'unknown' before marking closed",
+            "Fix: frontend 'P&L estimated' → 'P&L from exchange' in Trades page and RecentTrades widget",
         ],
     },
     {

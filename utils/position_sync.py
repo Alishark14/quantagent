@@ -6,6 +6,11 @@ This module queries the exchange and fixes any DB records that are wrong.
 IMPORTANT: Trades have a trading_mode field ("live" or "paper"). Live trades
 execute on mainnet, paper trades on testnet. The sync must query the correct
 network for each trade — grouping by (exchange, is_testnet) before comparing.
+
+Performance note: sync is ONLY called from background tasks (tracker_loop every
+2.5 min, startup once). Never called inline with API requests — page loads read
+directly from DB (instant). Adapters are created once and reused to avoid the
+20-second load_markets reconnect on every sync cycle.
 """
 
 import logging
@@ -15,7 +20,13 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# ── Position cache (avoid hammering the exchange on every API call) ────────────
+# ── Persistent sync adapters (created once, reused forever) ───────────────────
+# Separate from the factory cache — these are never cleared, avoiding the
+# 20-second load_markets reconnect that factory.clear_cache() would trigger.
+
+_sync_adapters: dict[str, object] = {}
+
+# ── Position cache (avoid hammering the exchange on every sync cycle) ──────────
 
 _position_cache: dict[str, set] = {}
 _cache_expiry: dict[str, float] = {}
@@ -27,6 +38,40 @@ def _is_testnet_for_mode(trading_mode: str) -> bool:
     return trading_mode != "live"
 
 
+def _get_sync_adapter(exchange_name: str, is_testnet: bool):
+    """Get a persistent adapter for syncing. Created once, reused forever.
+
+    Uses Config.EXCHANGE_TESTNET swap at creation time only. Does NOT call
+    factory.clear_cache() — the sync adapters are fully independent of the
+    factory singleton cache used by the trading bot.
+    """
+    import config as cfg
+
+    net_label = "testnet" if is_testnet else "mainnet"
+    key = f"{exchange_name}_{net_label}"
+
+    if key not in _sync_adapters:
+        original = cfg.Config.EXCHANGE_TESTNET
+        try:
+            cfg.Config.EXCHANGE_TESTNET = is_testnet
+            if exchange_name == "hyperliquid":
+                from exchanges.hyperliquid_adapter import HyperliquidAdapter
+                adapter = HyperliquidAdapter()
+            elif exchange_name == "dydx":
+                from exchanges.dydx_adapter import DydxAdapter
+                adapter = DydxAdapter()
+            else:
+                from exchanges.deribit_adapter import DeribitAdapter
+                adapter = DeribitAdapter()
+            adapter.connect()
+            _sync_adapters[key] = adapter
+            logger.info(f"SYNC: Created persistent {exchange_name} ({net_label}) adapter")
+        finally:
+            cfg.Config.EXCHANGE_TESTNET = original
+
+    return _sync_adapters[key]
+
+
 def get_cached_positions(exchange_name: str, is_testnet: bool) -> set | None:
     """Return set of open base symbols for exchange+network, cached for 30 seconds.
 
@@ -36,9 +81,6 @@ def get_cached_positions(exchange_name: str, is_testnet: bool) -> set | None:
 
     Returns None if the exchange query fails and no stale cache is available.
     """
-    import config as cfg
-    from exchanges import get_adapter, clear_cache as factory_clear_cache
-
     net_label = "testnet" if is_testnet else "mainnet"
     cache_key = f"{exchange_name}_{net_label}"
 
@@ -46,12 +88,8 @@ def get_cached_positions(exchange_name: str, is_testnet: bool) -> set | None:
     if cache_key in _cache_expiry and now < _cache_expiry[cache_key]:
         return _position_cache[cache_key]
 
-    # Cache expired or missing — refresh
-    original_testnet = cfg.Config.EXCHANGE_TESTNET
     try:
-        cfg.Config.EXCHANGE_TESTNET = is_testnet
-        factory_clear_cache()
-        adapter = get_adapter(exchange_name)
+        adapter = _get_sync_adapter(exchange_name, is_testnet)
         positions = adapter.get_open_positions()
 
         open_symbols: set[str] = set()
@@ -81,10 +119,6 @@ def get_cached_positions(exchange_name: str, is_testnet: bool) -> set | None:
         )
         return _position_cache.get(cache_key)
 
-    finally:
-        cfg.Config.EXCHANGE_TESTNET = original_testnet
-        factory_clear_cache()
-
 
 def _trade_base(trade_symbol: str) -> str:
     """Extract the meaningful base symbol from an internal trade symbol.
@@ -96,72 +130,16 @@ def _trade_base(trade_symbol: str) -> str:
     return trade_symbol.split("-")[0].upper()
 
 
-# ── In-memory sync (for API responses) ────────────────────────────────────────
-
-def sync_trade_statuses(trades: list[dict], default_exchange: str = "hyperliquid") -> list[dict]:
-    """Verify trade statuses against actual exchange positions (in-memory).
-
-    Fixes trades that are marked 'closed' but whose position still exists,
-    without writing to the database. Used when serving API responses.
-
-    Groups trades by (exchange, is_testnet) so that live trades are compared
-    against mainnet positions and paper trades against testnet positions.
-
-    Args:
-        trades: List of trade dicts (from SQLite or JSONL).
-        default_exchange: Fallback exchange when trade has no 'exchange' field.
-
-    Returns:
-        The same list with corrected status fields.
-    """
-    if not trades:
-        return trades
-
-    # Group trades by (exchange, is_testnet)
-    groups: dict[tuple[str, bool], list[dict]] = defaultdict(list)
-    for t in trades:
-        ex = t.get("exchange") or default_exchange
-        mode = t.get("trading_mode", "paper")
-        is_testnet = _is_testnet_for_mode(mode)
-        groups[(ex, is_testnet)].append(t)
-
-    # Fetch positions per (exchange, network) and correct statuses
-    for (ex_name, is_testnet), group_trades in groups.items():
-        open_symbols = get_cached_positions(ex_name, is_testnet)
-
-        if open_symbols is None:
-            # Exchange query failed — don't touch these trades
-            continue
-
-        net_label = "testnet" if is_testnet else "mainnet"
-        for trade in group_trades:
-            base = _trade_base(trade.get("symbol", ""))
-            position_exists = base in open_symbols
-            current_status = trade.get("status", "open")
-
-            if position_exists and current_status == "closed":
-                logger.warning(
-                    f"SYNC FIX: {trade.get('symbol')} (id={trade.get('id')}) "
-                    f"marked 'closed' but position EXISTS on {ex_name} ({net_label}). "
-                    f"Correcting to 'open'."
-                )
-                trade["status"] = "open"
-                trade["exit_price"] = None
-                trade["exit_time"] = None
-                trade["exit_reason"] = None
-                trade["realized_pnl"] = None
-
-    return trades
-
-
 # ── DB sync (corrects the database) ───────────────────────────────────────────
 
 def sync_and_update_db() -> int:
     """Scan recent trades in SQLite and fix any that are wrongly marked 'closed'.
 
-    Called periodically by the tracker loop. Only reopens trades where the
-    exchange confirms the position is still live. Groups by (exchange, is_testnet)
-    so live trades check mainnet and paper trades check testnet.
+    Called periodically by the tracker loop and once at startup. Only reopens
+    trades where the exchange confirms the position is still live AND the
+    exit_reason is unknown/empty (real exits like stop_loss/take_profit are
+    never touched). Groups by (exchange, is_testnet) so live trades check
+    mainnet and paper trades check testnet.
 
     Returns:
         Number of trades fixed.
@@ -174,9 +152,20 @@ def sync_and_update_db() -> int:
     if not all_trades:
         return 0
 
+    # Only consider trades that were closed without a confirmed real exit
+    # (real exits have exit_reason like "stop_loss", "take_profit", "time_exit")
+    wrongly_closed_candidates = [
+        t for t in all_trades
+        if t.get("status") == "closed"
+        and t.get("exit_reason") in (None, "unknown", "", "None")
+    ]
+
+    if not wrongly_closed_candidates:
+        return 0
+
     # Group by (exchange, is_testnet)
     groups: dict[tuple[str, bool], list] = defaultdict(list)
-    for t in all_trades:
+    for t in wrongly_closed_candidates:
         ex = t.get("exchange") or "hyperliquid"
         mode = t.get("trading_mode", "paper")
         is_testnet = _is_testnet_for_mode(mode)
@@ -195,7 +184,7 @@ def sync_and_update_db() -> int:
 
         for trade in trades:
             base = _trade_base(trade.get("symbol", ""))
-            if base in open_symbols and trade.get("status") == "closed":
+            if base in open_symbols:
                 logger.warning(
                     f"DB SYNC: Reopening trade {trade['id']} ({trade['symbol']}) "
                     f"— position still active on {ex_name} ({net_label})"

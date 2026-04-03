@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,18 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.6.1",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Dashboard Speed Fix",
+        "changes": [
+            "Fix: removed sync_trade_statuses() call from /api/trades — page now reads directly from DB (instant vs 30s)",
+            "Fix: position_sync.py uses persistent _sync_adapters dict — adapters created once and reused, no 20s load_markets reconnect per sync cycle",
+            "Fix: sync_and_update_db() only considers trades with exit_reason in (None, 'unknown', '', 'None') — real exits (stop_loss, take_profit) never touched",
+            "Fix: removed factory clear_cache() calls from position_sync.py — sync adapters are independent of factory singleton cache",
         ],
     },
     {

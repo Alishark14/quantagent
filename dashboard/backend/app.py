@@ -325,12 +325,6 @@ def trades(
         limit=10000,
     )
     if sqlite_all:
-        # Sync with exchange — fix any trades wrongly marked closed
-        try:
-            from utils.position_sync import sync_trade_statuses
-            sqlite_all = sync_trade_statuses(sqlite_all)
-        except Exception as _sync_err:
-            logger.warning(f"Position sync skipped: {_sync_err}")
         filtered = sqlite_all
         if symbol:
             filtered = [t for t in filtered if symbol.lower() in (t.get("symbol") or "").lower()]

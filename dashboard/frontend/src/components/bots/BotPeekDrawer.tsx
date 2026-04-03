@@ -281,10 +281,26 @@ function CycleCostCard({ event }: { event: BotEvent }) {
   )
 }
 
+function DecisionSkipCard({ event }: { event: BotEvent }) {
+  return (
+    <div className="px-2 py-1.5 opacity-70 space-y-0.5">
+      <div className="flex items-center gap-2">
+        <span className="text-sm">🚫</span>
+        <span className="text-[#6b7280] text-xs font-medium">Agents skipped — no clear signal</span>
+        <span className="text-[#4b5563] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+      </div>
+      {event.reasoning && (
+        <p className="text-[#4b5563] text-[10px] pl-6 break-words">{event.reasoning.slice(0, 150)}</p>
+      )}
+    </div>
+  )
+}
+
 function EventCard({ event }: { event: BotEvent }) {
   switch (event.type) {
     case 'agent_result': return <AgentResultCard event={event} />
     case 'decision': return <DecisionCard event={event} />
+    case 'decision_skip': return <DecisionSkipCard event={event} />
     case 'trade_execution': return <TradeExecutionCard event={event} />
     case 'sl_tp_placed': return <SlTpCard event={event} />
     case 'cycle_start': return <CycleStartCard event={event} />

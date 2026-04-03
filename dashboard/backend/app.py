@@ -236,8 +236,14 @@ def overview(bot_id: str = Query(""), mode: str = Query("all")):
     )
     if sqlite_trades:
         daily_pnl_val = get_daily_pnl(bot_id=bot_id or None, mode=mode if mode != "all" else None)
-        open_count = len(get_open_trades(bot_id=bot_id or None))
-        result = compute_overview_sqlite(sqlite_trades, daily_pnl=daily_pnl_val, open_count=open_count)
+        open_trades_list = get_open_trades(bot_id=bot_id or None)
+        total_unrealized = sum(float(t.get("unrealized_pnl") or 0) for t in open_trades_list)
+        result = compute_overview_sqlite(
+            sqlite_trades,
+            daily_pnl=daily_pnl_val,
+            open_count=len(open_trades_list),
+            unrealized_pnl=total_unrealized,
+        )
         return OverviewResponse(**result)
 
     # Fallback: JSONL-based estimates
@@ -267,7 +273,11 @@ def _sqlite_trade_to_record(t: dict) -> TradeRecord:
     exit_type = "open" if status == "open" else _EXIT_REASON_TO_TYPE.get(exit_reason, "unknown")
     entry_price = float(t.get("entry_fill_price") or t.get("entry_price") or 0)
     exit_price = float(t["exit_price"]) if t.get("exit_price") is not None else None
-    realized_pnl = float(t["realized_pnl"]) if t.get("realized_pnl") is not None else 0.0
+    # For open trades show unrealized P&L from exchange; for closed trades show realized P&L
+    if status == "open" and t.get("unrealized_pnl") is not None:
+        realized_pnl = float(t["unrealized_pnl"])
+    else:
+        realized_pnl = float(t["realized_pnl"]) if t.get("realized_pnl") is not None else 0.0
     pnl_pct = round((realized_pnl / float(t["position_size_usd"])) * 100, 4) if t.get("position_size_usd") else 0.0
 
     # Duration as human-readable string
@@ -317,11 +327,13 @@ def trades(
     bot_id: str = Query(""),
     bot_name: str = Query(""),
     mode: str = Query("all"),
+    status: str = Query(""),
 ):
     # Prefer SQLite trades table (real data); fall back to JSONL (estimated)
     sqlite_all = get_trades(
         bot_id=bot_id or None,
         mode=mode if mode != "all" else None,
+        status=status or None,
         limit=10000,
     )
     if sqlite_all:
@@ -473,6 +485,56 @@ def config():
         )
 
 
+# ── Symbol catalogue ─────────────────────────────────────────────────────────
+
+@app.get("/api/symbols")
+async def get_available_symbols():
+    """Return all tradeable symbols with category labels, built from the exchange's live market list."""
+    try:
+        import exchanges.hyperliquid_adapter as _hl
+        symbol_map = _hl.SYMBOL_MAP  # may be dynamically extended after adapter.connect()
+    except Exception:
+        symbol_map = {}
+
+    _COMMODITIES = {"GOLD", "SILVER", "COPPER", "PLATINUM", "PALLADIUM", "ALUMINIUM",
+                    "URANIUM", "WHEAT", "CORN", "CL", "BRENTOIL", "NATGAS", "WTIOIL"}
+    _INDICES     = {"SP500", "JP225", "VIX", "DXY", "XYZ100", "KR200"}
+    _STOCKS      = {"TSLA", "NVDA", "AAPL", "META", "MSFT", "GOOGL", "AMZN", "AMD",
+                    "NFLX", "PLTR", "COIN", "MSTR", "HOOD", "BABA", "INTC", "ORCL",
+                    "MU", "RIVN", "LLY", "COST", "SOFTBANK", "SMSN", "KIOXIA",
+                    "HYUNDAI", "GME", "HIMS", "DKNG"}
+    _FOREX       = {"EUR", "JPY", "EURUSD"}
+    _ENERGY      = {"CL", "BRENTOIL", "NATGAS", "WTIOIL"}
+
+    symbols = []
+    for internal, ccxt_sym in sorted(symbol_map.items()):
+        if ccxt_sym.startswith("XYZ-"):
+            asset = ccxt_sym.split("-", 1)[1].split("/")[0]
+            if asset in _ENERGY:
+                category = "Energy"
+            elif asset in _COMMODITIES:
+                category = "Commodities"
+            elif asset in _INDICES:
+                category = "Indices"
+            elif asset in _STOCKS:
+                category = "Stocks"
+            elif asset in _FOREX:
+                category = "Forex"
+            else:
+                category = "Other"
+        else:
+            category = "Crypto"
+
+        symbols.append({
+            "value": internal,
+            "label": internal,
+            "ccxt": ccxt_sym,
+            "category": category,
+        })
+
+    return symbols
+
+
 # ── Settings: Exchange connections ────────────────────────────────────────────
 
 @app.get("/api/settings/exchanges")
@@ -590,12 +652,19 @@ async def bot_log_stream(websocket: WebSocket, bot_id: str):
     symbol = bot["symbol"].lower()
     mode = bot["trading_mode"]
 
-    # Try multiple possible log locations to handle symbol format variations
-    possible_paths = [
-        PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log",
-        PROJECT_ROOT / "trade_logs" / mode / symbol.replace("-", "") / "bot.log",
-        PROJECT_ROOT / "trade_logs" / symbol / "bot.log",
-    ]
+    # Use the exact path saved when the bot was started (eliminates guessing)
+    saved_path = bot.get("log_path")
+    if saved_path:
+        possible_paths = [
+            Path(saved_path),
+            PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log",
+        ]
+    else:
+        possible_paths = [
+            PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log",
+            PROJECT_ROOT / "trade_logs" / mode / symbol.replace("-", "") / "bot.log",
+            PROJECT_ROOT / "trade_logs" / symbol / "bot.log",
+        ]
 
     log_path = None
     for p in possible_paths:
@@ -980,6 +1049,76 @@ def api_daily_pnl(mode: str = Query("all")):
             mode=mode if mode != "all" else None,
         )
     return result
+
+
+# ── Live Exchange Data ────────────────────────────────────────────────────────
+
+@app.get("/api/positions")
+async def get_live_positions():
+    """Get live open positions directly from exchange."""
+    from utils.position_sync import _get_sync_adapter
+
+    results = []
+    for ex_name, is_testnet in [("hyperliquid", False), ("hyperliquid", True)]:
+        try:
+            adapter = _get_sync_adapter(ex_name, is_testnet)
+            positions = await asyncio.to_thread(adapter.get_open_positions)
+            for p in positions:
+                base = p.symbol.split("/")[0]
+                if "-" in base:
+                    base = base.split("-")[-1]
+                internal_symbol = f"{base}-USDC"
+                results.append({
+                    "symbol": internal_symbol,
+                    "ccxt_symbol": p.symbol,
+                    "side": p.side,
+                    "size": p.size,
+                    "entry_price": p.entry_price,
+                    "unrealized_pnl": p.unrealized_pnl,
+                    "exchange": ex_name,
+                    "network": "testnet" if is_testnet else "mainnet",
+                })
+        except Exception as e:
+            logger.debug(
+                f"Positions fetch for {ex_name} {'testnet' if is_testnet else 'mainnet'}: {e}"
+            )
+
+    return results
+
+
+@app.get("/api/orders")
+async def get_live_orders():
+    """Get open SL/TP orders from exchange."""
+    from utils.position_sync import _get_sync_adapter
+
+    results = []
+    for ex_name, is_testnet in [("hyperliquid", False), ("hyperliquid", True)]:
+        try:
+            adapter = _get_sync_adapter(ex_name, is_testnet)
+            ex = adapter.get_exchange_client()
+            if not ex:
+                continue
+            orders = await asyncio.to_thread(ex.fetch_open_orders)
+            for o in orders:
+                results.append({
+                    "symbol": o.get("symbol"),
+                    "type": o.get("type"),
+                    "side": o.get("side"),
+                    "amount": o.get("amount"),
+                    "price": o.get("price"),
+                    "trigger": o.get("triggerPrice") or o.get("stopPrice"),
+                    "status": o.get("status"),
+                    "datetime": o.get("datetime"),
+                    "reduce_only": o.get("reduceOnly"),
+                    "exchange": ex_name,
+                    "network": "testnet" if is_testnet else "mainnet",
+                })
+        except Exception as e:
+            logger.debug(
+                f"Orders fetch for {ex_name} {'testnet' if is_testnet else 'mainnet'}: {e}"
+            )
+
+    return results
 
 
 # ── Guardian ──────────────────────────────────────────────────────────────────

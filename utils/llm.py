@@ -33,7 +33,9 @@ def call_llm_text(system_prompt: str, user_prompt: str, run_name: str = "llm_cal
     """
     llm = get_llm()
     messages = [
-        SystemMessage(content=system_prompt),
+        SystemMessage(content=[
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+        ]),
         HumanMessage(content=user_prompt),
     ]
     response = llm.invoke(messages, config={"run_name": run_name})
@@ -58,7 +60,9 @@ def call_llm_vision(system_prompt: str, user_prompt: str, image_b64: str, run_na
     """
     llm = get_llm()
     messages = [
-        SystemMessage(content=system_prompt),
+        SystemMessage(content=[
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+        ]),
         HumanMessage(
             content=[
                 {

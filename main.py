@@ -167,13 +167,18 @@ def _handle_open_position(symbol: str, timeframe: str, adapter) -> None:
     if bot_id:
         try:
             resp = _req.get(
-                f"http://localhost:8001/api/bots/{bot_id}/trades?limit=20&offset=0",
+                f"http://localhost:8001/api/trades"
+                f"?bot_id={bot_id}&symbol={symbol}&status=open&limit=5",
                 timeout=5,
             )
             if resp.ok:
-                for t in resp.json():
-                    if t.get("status") == "open" and t.get("symbol") == symbol:
-                        trade_entry_time = t.get("entry_time") or t.get("created_at")
+                data = resp.json()
+                trade_list = data.get("trades", []) if isinstance(data, dict) else data
+                # Newest open trade first (API returns DESC by created_at)
+                for t in trade_list:
+                    entry = t.get("entry_time") or t.get("timestamp") or t.get("created_at")
+                    if entry:
+                        trade_entry_time = entry
                         break
         except Exception:
             pass

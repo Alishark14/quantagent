@@ -16,7 +16,7 @@ from agents.trend import trend_agent_node
 from agents.risk_decision import risk_decision_agent_node
 from execution import execute_trade_node, log_trade
 from utils.event_emitter import (
-    emit_cycle_start, emit_agent_result, emit_decision, emit_trade_execution,
+    emit_cycle_start, emit_agent_result, emit_decision, emit_trade_execution, emit_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,7 +154,14 @@ def run_analysis(
                 )
 
         decision = result.get("decision", {})
-        if decision.get("decision"):
+        if decision.get("decision") == "SKIP":
+            emit_event({
+                "type": "decision_skip",
+                "symbol": symbol,
+                "reasoning": decision.get("justification", ""),
+                "message": "Agents couldn't agree — skipping trade. Saved ~$0.033 + trade risk.",
+            })
+        elif decision.get("decision"):
             emit_decision(
                 direction=decision.get("decision", ""),
                 entry=decision.get("entry_price", 0),

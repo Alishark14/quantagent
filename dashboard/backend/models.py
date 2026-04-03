@@ -24,6 +24,7 @@ class OverviewResponse(BaseModel):
     equity_curve: list[EquityPoint]
     daily_pnl: float = 0.0
     open_trades: int = 0
+    unrealized_pnl: float = 0.0
 
 
 class TradeRecord(BaseModel):

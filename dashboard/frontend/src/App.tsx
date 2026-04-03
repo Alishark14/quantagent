@@ -1,15 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { api } from './api/client'
 import Sidebar from './components/layout/Sidebar'
 import Header from './components/layout/Header'
-import Overview from './pages/Overview'
-import Trades from './pages/Trades'
 import Agents from './pages/Agents'
 import Breakdown from './pages/Breakdown'
 import Settings from './pages/Settings'
 import Bots from './pages/Bots'
 import BotDetail from './pages/BotDetail'
+import LiveMonitor from './pages/LiveMonitor'
+import Portfolio from './pages/Portfolio'
 import { GlobalFilterProvider, useGlobalFilter } from './context/GlobalFilterContext'
 
 const AUTO_REFRESH_MS = 30_000
@@ -59,11 +59,14 @@ function AppInner() {
           <Routes>
             <Route path="/bots" element={<Bots refreshTick={refreshTick} />} />
             <Route path="/bots/:id" element={<BotDetail refreshTick={refreshTick} />} />
-            <Route path="/" element={<Overview refreshTick={refreshTick} />} />
-            <Route path="/trades" element={<Trades refreshTick={refreshTick} />} />
+            <Route path="/live-monitor" element={<LiveMonitor />} />
+            <Route path="/portfolio/*" element={<Portfolio refreshTick={refreshTick} />} />
             <Route path="/agents" element={<Agents refreshTick={refreshTick} />} />
             <Route path="/breakdown" element={<Breakdown refreshTick={refreshTick} />} />
             <Route path="/settings" element={<Settings refreshTick={refreshTick} />} />
+            {/* Legacy redirects */}
+            <Route path="/" element={<Navigate to="/portfolio/overview" replace />} />
+            <Route path="/trades" element={<Navigate to="/portfolio/history" replace />} />
           </Routes>
         </main>
       </div>

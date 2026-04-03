@@ -318,6 +318,7 @@ def compute_overview_sqlite(
     trades: list[dict],
     daily_pnl: float = 0.0,
     open_count: int = 0,
+    unrealized_pnl: float = 0.0,
 ) -> dict:
     """Compute overview stats from SQLite closed trade records."""
     pnls = [t["realized_pnl"] for t in trades if t.get("realized_pnl") is not None]
@@ -327,7 +328,8 @@ def compute_overview_sqlite(
     losses = total_trades - wins
     win_rate = round(wins / total_trades * 100, 2) if total_trades else 0.0
 
-    total_pnl = round(sum(pnls), 4)
+    realized_total = round(sum(pnls), 4)
+    total_pnl = round(realized_total + unrealized_pnl, 4)
     winning_pnl = sum(p for p in pnls if p > 0)
     losing_pnl = abs(sum(p for p in pnls if p < 0))
     profit_factor = round(winning_pnl / losing_pnl, 3) if losing_pnl else 0.0
@@ -387,4 +389,5 @@ def compute_overview_sqlite(
         "equity_curve": equity_curve,
         "daily_pnl": round(daily_pnl, 4),
         "open_trades": open_count,
+        "unrealized_pnl": round(unrealized_pnl, 4),
     }

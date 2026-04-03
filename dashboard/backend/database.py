@@ -111,7 +111,21 @@ def init_db() -> None:
         try:
             conn.execute("ALTER TABLE trades ADD COLUMN cycle_cost REAL DEFAULT 0")
         except Exception:
-            pass  # Column already exists
+            pass
+        # Add log_path column to bots if not present (migration)
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN log_path TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        # Add unrealized_pnl column to trades if not present (migration)
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN unrealized_pnl REAL DEFAULT NULL")
+        except Exception:
+            pass
+        # Clear bad realized_pnl values that were incorrectly set on open trades
+        conn.execute(
+            "UPDATE trades SET realized_pnl = NULL WHERE status = 'open' AND realized_pnl IS NOT NULL"
+        )  # Column already exists
 
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS cycle_costs (
@@ -277,7 +291,7 @@ def update_bot(bot_id: str, updates: dict) -> dict:
         "trading_mode", "atr_multiplier", "atr_length", "rr_ratio_min",
         "rr_ratio_max", "max_daily_loss_usd", "max_position_pct",
         "forecast_candles", "agents_enabled", "llm_model", "exchange",
-        "exchange_testnet",
+        "exchange_testnet", "log_path",
     }
     fields = {k: v for k, v in updates.items() if k in allowed and v is not None}
     if not fields:

@@ -10,14 +10,9 @@ from utils.llm import call_llm_vision
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a trading-pattern recognition assistant tasked with identifying classical
-high-frequency trading patterns from candlestick charts.
+chart patterns from candlestick charts.
 
-You will receive a {timeframe} candlestick chart. Analyze the chart visually and determine
-if any known pattern is present."""
-
-PATTERN_LIBRARY_PROMPT = """This is a {timeframe} candlestick chart generated from recent OHLC market data for {symbol}.
-
-Please refer to the following classic candlestick patterns:
+You will receive a {timeframe} candlestick chart. Analyze the chart visually using this pattern library:
 
 1. Inverse Head and Shoulders: Three lows with the middle one being the lowest; symmetrical structure, typically precedes an upward trend.
 2. Double Bottom: Two similar lows with a rebound in between, forming a "W".
@@ -36,19 +31,21 @@ Please refer to the following classic candlestick patterns:
 15. Expanding Triangle: Highs and lows spread wider, volatile swings.
 16. Symmetrical Triangle: Highs and lows converge; breakout after apex.
 
-Determine whether the chart matches any of these patterns.
-
 Provide your analysis in three sections:
-- **Structure**: Describe the key structural features you observe (highs, lows, shapes).
-- **Trend**: What does the detected pattern suggest about the likely price direction?
-- **Symmetry**: How symmetric/complete is the pattern? Is it confirmed or still forming?
+- **Structure**: Key structural features you observe (highs, lows, shapes).
+- **Trend**: What the detected pattern suggests about likely price direction.
+- **Symmetry**: How symmetric/complete is the pattern? Confirmed or still forming?
 
-End with a clear 1-2 sentence SUMMARY: which pattern (if any) you detected, your confidence level, and the implied directional bias.
+End with a clear 1-2 sentence SUMMARY: which pattern (if any) you detected,
+confidence level, and directional bias.
 
 On the very last line of your response, output exactly one of:
 SIGNAL: BULLISH
 SIGNAL: BEARISH
 SIGNAL: NEUTRAL"""
+
+PATTERN_ANALYSIS_PROMPT = """This is a {timeframe} candlestick chart for {symbol}.
+Determine whether the chart matches any pattern from the library and provide your analysis."""
 
 
 def pattern_agent_node(state: dict) -> dict:
@@ -65,7 +62,7 @@ def pattern_agent_node(state: dict) -> dict:
     # Step 2: Send chart to Claude vision with pattern library
     report, usage = call_llm_vision(
         system_prompt=SYSTEM_PROMPT.format(timeframe=timeframe),
-        user_prompt=PATTERN_LIBRARY_PROMPT.format(timeframe=timeframe, symbol=symbol),
+        user_prompt=PATTERN_ANALYSIS_PROMPT.format(timeframe=timeframe, symbol=symbol),
         image_b64=chart_b64,
         run_name="PatternAgent",
     )

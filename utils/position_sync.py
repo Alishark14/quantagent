@@ -29,6 +29,7 @@ _sync_adapters: dict[str, object] = {}
 # ── Position cache (avoid hammering the exchange on every sync cycle) ──────────
 
 _position_cache: dict[str, set] = {}
+_position_pnl_cache: dict[str, dict[str, float]] = {}  # cache_key → {base: unrealized_pnl}
 _cache_expiry: dict[str, float] = {}
 _CACHE_TTL = 30  # seconds
 
@@ -93,6 +94,7 @@ def get_cached_positions(exchange_name: str, is_testnet: bool) -> set | None:
         positions = adapter.get_open_positions()
 
         open_symbols: set[str] = set()
+        pnl_by_base: dict[str, float] = {}
         for p in positions:
             # Extract the meaningful base from CCXT format
             # "BTC/USDC:USDC"        → "BTC"
@@ -102,9 +104,12 @@ def get_cached_positions(exchange_name: str, is_testnet: bool) -> set | None:
             base = ccxt_sym.split("/")[0]
             if "-" in base:
                 base = base.split("-")[-1]
-            open_symbols.add(base.upper())
+            base = base.upper()
+            open_symbols.add(base)
+            pnl_by_base[base] = p.unrealized_pnl
 
         _position_cache[cache_key] = open_symbols
+        _position_pnl_cache[cache_key] = pnl_by_base
         _cache_expiry[cache_key] = now + _CACHE_TTL
 
         logger.info(
@@ -163,6 +168,14 @@ def sync_and_update_db() -> int:
     if not wrongly_closed_candidates:
         return 0
 
+    # Build a set of symbol bases that already have a current open trade — don't reopen
+    # closed trades for those symbols (the new open trade is the authoritative record).
+    already_open_bases: set[str] = {
+        _trade_base(t.get("symbol", ""))
+        for t in all_trades
+        if t.get("status") == "open"
+    }
+
     # Group by (exchange, is_testnet)
     groups: dict[tuple[str, bool], list] = defaultdict(list)
     for t in wrongly_closed_candidates:
@@ -185,6 +198,14 @@ def sync_and_update_db() -> int:
         for trade in trades:
             base = _trade_base(trade.get("symbol", ""))
             if base in open_symbols:
+                # Don't reopen if there's already a current open trade for this symbol —
+                # that newer trade is the authoritative record, not this stale closed one.
+                if base in already_open_bases:
+                    logger.debug(
+                        f"DB SYNC: Skipping reopen of {trade['id']} ({trade['symbol']}) "
+                        f"— a newer open trade already exists for {base}"
+                    )
+                    continue
                 logger.warning(
                     f"DB SYNC: Reopening trade {trade['id']} ({trade['symbol']}) "
                     f"— position still active on {ex_name} ({net_label})"
@@ -201,9 +222,40 @@ def sync_and_update_db() -> int:
                            WHERE id = ?""",
                         (datetime.now(timezone.utc).isoformat(), trade["id"]),
                     )
+                # Now this base has an open trade — prevent reopening any older trades
+                already_open_bases.add(base)
                 fixes += 1
 
     if fixes > 0:
         logger.info(f"DB SYNC: Fixed {fixes} incorrectly closed trade(s)")
+
+    # Update unrealized_pnl for all currently-open trades from the exchange position data
+    open_trades = [t for t in all_trades if t.get("status") == "open"]
+    pnl_updates = 0
+    for trade in open_trades:
+        ex = trade.get("exchange") or "hyperliquid"
+        mode = trade.get("trading_mode", "paper")
+        is_testnet = _is_testnet_for_mode(mode)
+        net_label = "testnet" if is_testnet else "mainnet"
+        cache_key = f"{ex}_{net_label}"
+
+        pnl_by_base = _position_pnl_cache.get(cache_key)
+        if pnl_by_base is None:
+            continue
+
+        base = _trade_base(trade.get("symbol", ""))
+        if base not in pnl_by_base:
+            continue
+
+        unrealized = pnl_by_base[base]
+        with db._get_conn() as conn:
+            conn.execute(
+                "UPDATE trades SET unrealized_pnl = ?, updated_at = ? WHERE id = ? AND status = 'open'",
+                (unrealized, datetime.now(timezone.utc).isoformat(), trade["id"]),
+            )
+        pnl_updates += 1
+
+    if pnl_updates > 0:
+        logger.debug(f"DB SYNC: Updated unrealized_pnl for {pnl_updates} open trade(s)")
 
     return fixes

@@ -34,6 +34,9 @@ def reconcile_trades(adapter: ExchangeAdapter, open_trades: list[dict]) -> dict:
     if not open_trades:
         return summary
 
+    # Process newest open trades first so the most recent record is matched to the position
+    open_trades = sorted(open_trades, key=lambda t: t.get("created_at", ""), reverse=True)
+
     # Get all current positions from exchange.
     # If the API call fails or returns None, skip entirely — never assume a
     # position closed because of an API error.

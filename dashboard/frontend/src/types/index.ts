@@ -18,6 +18,7 @@ export interface OverviewData {
   equity_curve: EquityPoint[]
   daily_pnl?: number
   open_trades?: number
+  unrealized_pnl?: number
 }
 
 export interface TradeRecord {
@@ -187,6 +188,31 @@ export interface ApiCostData {
   }
   by_bot: Record<string, { cost: number; cycles: number; name: string }>
   monthly_estimate: number
+}
+
+export interface LivePosition {
+  symbol: string
+  ccxt_symbol: string
+  side: string
+  size: number
+  entry_price: number
+  unrealized_pnl: number
+  exchange: string
+  network: string
+}
+
+export interface LiveOrder {
+  symbol: string | null
+  type: string | null
+  side: string | null
+  amount: number | null
+  price: number | null
+  trigger: number | null
+  status: string | null
+  datetime: string | null
+  reduce_only: boolean | null
+  exchange: string
+  network: string
 }
 
 export interface BotCreate {

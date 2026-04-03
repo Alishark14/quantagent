@@ -86,6 +86,13 @@ def start_bot(bot_config: dict) -> int:
     _processes[bot_id] = process
     logger.info(f"Started bot {bot_config['name']} ({bot_id}) with PID {process.pid}")
 
+    # Persist the exact log path so the WebSocket handler can find it without guessing
+    try:
+        from database import update_bot
+        update_bot(bot_id, {"log_path": str(log_dir / "bot.log")})
+    except Exception as e:
+        logger.warning(f"Could not save log_path for bot {bot_id}: {e}")
+
     # Check that the process didn't die immediately (import error, missing dep, etc.)
     time.sleep(2)
     if process.poll() is not None:

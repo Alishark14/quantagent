@@ -8,6 +8,8 @@ import type {
   ExchangeStatus,
   ExitsData,
   HealthData,
+  LiveOrder,
+  LivePosition,
   OverviewData,
   TradeRecord,
   TradesResponse,
@@ -75,6 +77,7 @@ export const api = {
     bot_name?: string
     botId?: string
     mode?: string
+    status?: string
   }) => {
     const q = new URLSearchParams()
     if (params?.limit !== undefined) q.set('limit', String(params.limit))
@@ -85,6 +88,7 @@ export const api = {
     if (params?.bot_name) q.set('bot_name', params.bot_name)
     if (params?.botId) q.set('bot_id', params.botId)
     if (params?.mode && params.mode !== 'all') q.set('mode', params.mode)
+    if (params?.status) q.set('status', params.status)
     return get<TradesResponse>(`/api/trades?${q}`)
   },
 
@@ -160,6 +164,15 @@ export const api = {
     const qs = q.toString()
     return get<Record<string, number>>(`/api/stats/daily-pnl${qs ? `?${qs}` : ''}`)
   },
+
+  // ── Symbol catalogue ──────────────────────────────────────────────────────
+  getAvailableSymbols: () =>
+    get<{ value: string; label: string; ccxt: string; category: string }[]>('/api/symbols'),
+
+  // ── Live exchange data ─────────────────────────────────────────────────────
+  getPositions: () => get<LivePosition[]>('/api/positions'),
+
+  getOrders: () => get<LiveOrder[]>('/api/orders'),
 
   // ── Guardian ───────────────────────────────────────────────────────────────
   guardianStatus: () =>

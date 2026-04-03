@@ -67,7 +67,12 @@ def execute_trade_node(state: dict) -> dict:
         logger.warning("No decision found in state, skipping execution.")
         return {"trade_result": {"status": "skipped", "reason": "no decision"}}
 
-    direction = decision["decision"]
+    direction = decision.get("decision", "").upper()
+    if direction not in ("LONG", "SHORT"):
+        reason = "No clear signal" if direction == "SKIP" else f"No signal: {direction}"
+        logger.info(f"Decision is {direction} — skipping trade. {decision.get('justification', '')}")
+        return {"trade_result": {"status": "skipped", "reason": reason}}
+
     entry_price = float(decision["entry_price"])
     stop_loss = float(decision["stop_loss"])
     take_profit = float(decision["take_profit"])

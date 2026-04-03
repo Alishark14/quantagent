@@ -162,12 +162,46 @@ class HyperliquidAdapter(ExchangeAdapter):
                 ) from e
             raise
 
+        # Build dynamic symbol map from all loaded markets (extends the static SYMBOL_MAP)
+        self._build_symbol_map()
+
         logger.info(
             f"Hyperliquid adapter connected "
             f"({'testnet' if self._testnet else 'mainnet'}, "
-            f"{len(self._exchange.markets)} markets"
+            f"{len(self._exchange.markets)} markets, "
+            f"{len(SYMBOL_MAP)} mapped symbols"
             f"{', subaccount: ' + self._subaccount[:10] + '...' if self._subaccount else ''})"
         )
+
+    def _build_symbol_map(self) -> None:
+        """Extend SYMBOL_MAP with any additional swap markets loaded from the exchange."""
+        global SYMBOL_MAP
+
+        base_map = dict(SYMBOL_MAP)
+        new_count = 0
+
+        for ccxt_symbol, market in self._exchange.markets.items():
+            if market.get("type") != "swap":
+                continue
+            if ":" not in ccxt_symbol:
+                continue
+
+            # Parse CCXT symbol: "BTC/USDC:USDC" → base="BTC", "XYZ-GOLD/USDC:USDC" → base="GOLD"
+            base_part = ccxt_symbol.split("/")[0]  # e.g. "BTC" or "XYZ-GOLD"
+            if "-" in base_part:
+                # HIP-3: deployer-asset format — keep asset only
+                _, asset = base_part.split("-", 1)
+            else:
+                asset = base_part
+
+            internal = f"{asset}-USDC"
+            if internal not in base_map:
+                base_map[internal] = ccxt_symbol
+                new_count += 1
+
+        SYMBOL_MAP = base_map
+        if new_count:
+            logger.info(f"Symbol map extended: {new_count} new symbols from exchange (total {len(SYMBOL_MAP)})")
 
     def _get_hip3_params(self, ccxt_symbol: str) -> dict:
         """Return extra params required for HIP-3 (XYZ deployer) markets."""
@@ -211,14 +245,22 @@ class HyperliquidAdapter(ExchangeAdapter):
             return symbol  # Already in CCXT format
         if symbol in SYMBOL_MAP:
             return SYMBOL_MAP[symbol]
-        # Auto-generate for unmapped USDC pairs: "XYZ-USDC" → "XYZ/USDC:USDC"
-        if symbol.endswith("-USDC"):
-            base = symbol[:-5]  # strip "-USDC"
-            return f"{base}/USDC:USDC"
-        raise ValueError(
-            f"No Hyperliquid symbol mapping for '{symbol}'. "
-            f"Known symbols: {list(SYMBOL_MAP.keys())}"
-        )
+        if not symbol.endswith("-USDC"):
+            raise ValueError(
+                f"No Hyperliquid symbol mapping for '{symbol}'. "
+                f"Known symbols: {list(SYMBOL_MAP.keys())}"
+            )
+        base = symbol[:-5]  # strip "-USDC"
+        # If markets are loaded, check them directly (handles any symbol not in static map)
+        if self._exchange:
+            candidate = f"{base}/USDC:USDC"
+            if candidate in self._exchange.markets:
+                return candidate
+            candidate = f"XYZ-{base}/USDC:USDC"
+            if candidate in self._exchange.markets:
+                return candidate
+        # Last-resort auto-generate
+        return f"{base}/USDC:USDC"
 
     def precision_adjust(self, symbol: str, amount: float, price: float) -> tuple[float, float]:
         ex_symbol = self.to_exchange_symbol(symbol)

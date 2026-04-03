@@ -35,6 +35,10 @@ interface BotEvent {
   new_sl?: number
   peak_price?: number
   trail_distance?: number
+  // pyramid_add
+  size?: number
+  pyramid_number?: number
+  sl_adjustment?: string
   symbol?: string
   timeframe?: string
   total_cost?: number
@@ -418,11 +422,79 @@ function DecisionSkipCard({ event }: { event: BotEvent }) {
   )
 }
 
+function PyramidAddCard({ event }: { event: BotEvent }) {
+  const dir = (event.direction ?? '').replace('ADD_', '')
+  return (
+    <div className="bg-[#1a1400] border border-[#854d0e]/40 rounded-lg px-3 py-2 space-y-1">
+      <BotLabel event={event} />
+      <div className="flex items-center gap-2">
+        <span className="text-sm">📊</span>
+        <span className="text-[#fbbf24] text-xs font-semibold">
+          Pyramid #{event.pyramid_number ?? '?'}
+        </span>
+        <span className="text-[#78350f] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+      </div>
+      <div className="flex gap-3 text-[10px] pl-6">
+        <span className={`font-bold ${dir === 'LONG' ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>{dir}</span>
+        {event.size != null && event.size > 0 && (
+          <span className="text-[#d97706] font-mono">${event.size.toFixed(0)}</span>
+        )}
+        {event.symbol && <span className="text-[#78350f] font-mono">{event.symbol}</span>}
+        {event.sl_adjustment && event.sl_adjustment !== 'maintain' && (
+          <span className="text-[#92400e]">SL → {event.sl_adjustment.replace(/_/g, ' ')}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function EarlyCloseCard({ event }: { event: BotEvent }) {
+  return (
+    <div className="bg-[#1a0a0a] border border-[#991b1b]/40 rounded-lg px-3 py-2 space-y-1">
+      <BotLabel event={event} />
+      <div className="flex items-center gap-2">
+        <span className="text-sm">🔴</span>
+        <span className="text-[#f87171] text-xs font-semibold">Early Close</span>
+        <span className="text-[#7f1d1d] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+      </div>
+      <div className="text-[#fca5a5] text-xs pl-6">
+        Contrary signal{event.symbol ? ` — closing ${event.symbol}` : ''}
+      </div>
+      {event.message && (
+        <p className="text-[#7f1d1d] text-[10px] pl-6 break-words">{event.message.slice(0, 150)}</p>
+      )}
+    </div>
+  )
+}
+
+function HoldCard({ event }: { event: BotEvent }) {
+  return (
+    <div className="px-2 py-1.5 opacity-60 space-y-0.5">
+      <div className="flex items-center gap-2">
+        <span className="text-sm">✋</span>
+        <div className="flex-1 min-w-0">
+          <BotLabel event={event} />
+          <span className="text-[#6b7280] text-xs font-medium">
+            Hold — keeping <span className="font-mono text-[#9ca3af]">{event.symbol}</span> position
+          </span>
+        </div>
+        <span className="text-[#4b5563] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+      </div>
+      {event.message && (
+        <p className="text-[#4b5563] text-[10px] pl-6 break-words">{event.message.slice(0, 120)}</p>
+      )}
+    </div>
+  )
+}
+
 function EventCard({ event }: { event: BotEvent }) {
   switch (event.type) {
     case 'agent_result': return <AgentResultCard event={event} />
     case 'decision': return <DecisionCard event={event} />
     case 'decision_skip': return <DecisionSkipCard event={event} />
+    case 'pyramid_add': return <PyramidAddCard event={event} />
+    case 'early_close': return <EarlyCloseCard event={event} />
+    case 'hold': return <HoldCard event={event} />
     case 'trade_execution': return <TradeExecutionCard event={event} />
     case 'sl_tp_placed': return <SlTpCard event={event} />
     case 'trailing_sl_update': return <TrailingSlUpdateCard event={event} />

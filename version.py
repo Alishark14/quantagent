@@ -1,7 +1,7 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "1.0.0"
-__version_date__ = "2026.04.03"
+__version__ = "1.1.0"
+__version_date__ = "2026.04.04"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
 
@@ -70,6 +70,27 @@ def compute_cycle_cost(
 
 
 VERSION_HISTORY = [
+    {
+        "version": "1.1.0",
+        "date": "2026.04.04",
+        "phase": "pre-production",
+        "name": "Shared Memory + Pyramiding",
+        "changes": [
+            "Add: cycle_memory column to bots table (SQLite, survives restarts)",
+            "Add: utils/memory.py — load_memory(), save_memory(), update_memory_after_cycle(), get_level2_context(), format_memory_for_prompt()",
+            "Add: GET /api/bots/{id}/memory and POST /api/internal/bot-memory/{id} endpoints",
+            "Add: NEW decision actions: ADD_LONG, ADD_SHORT (pyramid), CLOSE_ALL (contrary exit), HOLD (no action)",
+            "Add: Memory context (~300 tokens) injected into DecisionAgent prompt every cycle",
+            "Add: Pyramid validation — max 2 adds, price must move ≥ 0.5×ATR in favor since last entry",
+            "Add: _execute_close_all() in execution.py — cancels orders + market-closes (contrary signal)",
+            "Add: _execute_pyramid() in execution.py — market order + optional SL adjustment (maintain/break-even/swing)",
+            "Change: main.py always runs full LLM analysis (removed position-open SKIP optimization)",
+            "Change: Time-based exit still runs FIRST before analysis in run_cycle()",
+            "Add: Memory updated after every cycle (load → analyze → execute → save)",
+            "Add: graph.py emits pyramid_add, early_close, hold events",
+            "Add: PyramidAddCard (gold/amber), EarlyCloseCard (red), HoldCard (gray) in BotPeekDrawer + LiveMonitor",
+        ],
+    },
     {
         "version": "1.0.0",
         "date": "2026.04.03",

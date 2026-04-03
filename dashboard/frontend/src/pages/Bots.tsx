@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Plus, Shield, X, Zap } from 'lucide-react'
+import { AlertTriangle, Plus, X, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import type { Bot, BotCreate } from '../types'
 import BotCard from '../components/bots/BotCard'
@@ -30,7 +30,6 @@ export default function Bots({ refreshTick }: Props) {
 
   const [closeConfirm, setCloseConfirm] = useState(false)
   const [closing, setClosing] = useState(false)
-  const [guardianActive, setGuardianActive] = useState(false)
 
   const [peekBotId, setPeekBotId] = useState<string | null>(null)
 
@@ -67,13 +66,6 @@ export default function Bots({ refreshTick }: Props) {
     const id = setInterval(fetchBots, AUTO_REFRESH_MS)
     return () => clearInterval(id)
   }, [fetchBots])
-
-  // Check guardian status once on mount
-  useEffect(() => {
-    api.guardianStatus()
-      .then(s => setGuardianActive(s.active))
-      .catch(() => setGuardianActive(false))
-  }, [])
 
   // ── Bot actions ───────────────────────────────────────────────────────────
 
@@ -168,19 +160,6 @@ export default function Bots({ refreshTick }: Props) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Guardian indicator */}
-          <div className="flex items-center gap-1.5 text-xs text-text-muted">
-            <Shield size={13} className={guardianActive ? 'text-[#22c55e]' : 'text-[#6b7280]'} />
-            <span className={guardianActive ? 'text-[#22c55e]' : 'text-[#6b7280]'}>
-              {guardianActive ? 'Guardian active' : 'Guardian offline'}
-            </span>
-            {guardianActive && (
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#22c55e] opacity-75" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#22c55e]" />
-              </span>
-            )}
-          </div>
 
           {/* Close All Positions */}
           <button

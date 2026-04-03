@@ -30,6 +30,7 @@ from database import (
     get_all_bots,
     get_api_cost_stats,
     get_bot,
+    get_bot_memory,
     get_bot_trades,
     get_daily_pnl,
     get_open_trades,
@@ -40,6 +41,7 @@ from database import (
     record_trade,
     update_bot,
     update_bot_heartbeat,
+    update_bot_memory,
     update_bot_status,
     update_trade_cycle_cost,
 )
@@ -70,22 +72,9 @@ from trade_analyzer import (
     get_all_enriched,
 )
 
-async def guardian_loop() -> None:
-    """Run position reconciliation every 60 seconds."""
-    await asyncio.sleep(10)  # Let the server finish starting before first run
-    while True:
-        try:
-            from utils.position_guardian import reconcile_positions
-            all_bots = get_all_bots()
-            await asyncio.to_thread(reconcile_positions, all_bots)
-        except Exception as e:
-            logger.error(f"Guardian loop error: {e}")
-        await asyncio.sleep(60)
-
-
 async def tracker_loop() -> None:
     """Run trade outcome reconciliation every 30 seconds."""
-    await asyncio.sleep(15)  # Stagger with guardian (which starts at 10s)
+    await asyncio.sleep(15)
     cycle_count = 0
     while True:
         try:
@@ -155,22 +144,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Startup position sync failed (non-fatal): {e}")
 
-    guardian_task = asyncio.create_task(guardian_loop())
-    logger.info("Position Guardian started")
     tracker_task = asyncio.create_task(tracker_loop())
     logger.info("Trade Outcome Tracker started")
 
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────────────
-    guardian_task.cancel()
     tracker_task.cancel()
-    for task in [guardian_task, tracker_task]:
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    logger.info("Position Guardian and Trade Outcome Tracker stopped")
+    try:
+        await tracker_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Trade Outcome Tracker stopped")
 
 
 app = FastAPI(title="QuantAgent Dashboard API", version="1.0.0", lifespan=lifespan)
@@ -860,10 +845,8 @@ def api_stop_bot(bot_id: str):
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     stop_bot(bot_id)
-    # Positions are left open intentionally — the guardian picks them up
-    # and closes them after the 2× timeframe grace period if the bot isn't restarted.
     update_bot_status(bot_id, "stopped", pid=None)
-    logger.info(f"Bot '{bot['name']}' stopped manually. Open positions left for guardian.")
+    logger.info(f"Bot '{bot['name']}' stopped manually.")
     return BotResponse(**get_bot(bot_id))
 
 
@@ -917,7 +900,25 @@ def api_bot_trades(
     return get_bot_trades(bot_id, limit=limit, offset=offset)
 
 
+# ── Bot memory ───────────────────────────────────────────────────────────────
+
+@app.get("/api/bots/{bot_id}/memory")
+def api_get_bot_memory(bot_id: str):
+    """Return the bot's cycle memory dict."""
+    bot = get_bot(bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    return get_bot_memory(bot_id)
+
+
 # ── Internal endpoints (called by bot worker processes) ───────────────────────
+
+@app.post("/api/internal/bot-memory/{bot_id}")
+async def api_update_bot_memory(bot_id: str, data: dict):
+    """Update bot's cycle memory (called by bot worker after each cycle)."""
+    update_bot_memory(bot_id, data)
+    return {"status": "ok"}
+
 
 @app.post("/api/internal/heartbeat/{bot_id}")
 def api_heartbeat(bot_id: str):
@@ -1119,18 +1120,6 @@ async def get_live_orders():
             )
 
     return results
-
-
-# ── Guardian ──────────────────────────────────────────────────────────────────
-
-@app.get("/api/guardian/status")
-def api_guardian_status():
-    """Return current guardian state — orphan tracker and active flag."""
-    from utils.position_guardian import _orphan_tracker
-    return {
-        "active": True,
-        "orphan_tracker": {k: v.isoformat() for k, v in _orphan_tracker.items()},
-    }
 
 
 # ── Emergency ─────────────────────────────────────────────────────────────────

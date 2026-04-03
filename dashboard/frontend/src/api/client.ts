@@ -180,10 +180,6 @@ export const api = {
 
   getOrders: () => get<LiveOrder[]>('/api/orders'),
 
-  // ── Guardian ───────────────────────────────────────────────────────────────
-  guardianStatus: () =>
-    get<{ active: boolean; orphan_tracker: Record<string, string> }>('/api/guardian/status'),
-
   // ── Emergency ──────────────────────────────────────────────────────────────
   closeAllPositions: () =>
     post<{ closed: number; failed: number; orders_cancelled: number }>(

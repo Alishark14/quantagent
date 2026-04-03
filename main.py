@@ -38,6 +38,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from config import Config
 from graph import run_analysis
 from utils.helpers import timeframe_to_seconds, max_position_lifetime
+from utils.memory import load_memory, save_memory, update_memory_after_cycle
 from version import __version_full__, __phase__, MODEL_COSTS
 
 # Logging setup
@@ -370,7 +371,17 @@ def _run_full_analysis(symbol: str, timeframe: str, execute_trades: bool) -> dic
 # ── Cycle runner ──────────────────────────────────────────────────────────────
 
 def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
-    """Run one analysis cycle for all symbols."""
+    """Run one analysis cycle for all symbols.
+
+    v1.1 change: Every cycle runs full LLM analysis regardless of position state.
+    The DecisionAgent receives memory context (recent cycles, current position,
+    trade history) and can return ADD_LONG/ADD_SHORT/CLOSE_ALL/HOLD in addition
+    to LONG/SHORT/SKIP.
+
+    Time-based exits still run FIRST before analysis, before any API call.
+    """
+    bot_id = os.getenv("BOT_ID", "")
+
     for symbol in symbols:
         try:
             logger.info(f"{'='*60}")
@@ -379,19 +390,114 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
             logger.info(f"{'='*60}")
 
             if execute_trades:
+                # Load memory first (needed to detect if time-exit should clear it)
+                memory = load_memory(bot_id)
+
+                # ── Time-based exit check (highest priority) ───────────────────
                 try:
                     from exchanges import get_adapter
                     adapter = get_adapter()
                     if adapter.has_open_position(symbol):
-                        _handle_open_position(symbol, timeframe, adapter)
-                        _send_heartbeat()
-                        continue
-                except Exception as e:
-                    logger.warning(
-                        f"Position check failed for {symbol}: {e} — proceeding with analysis"
-                    )
+                        from utils.event_emitter import emit_event
+                        max_lifetime = max_position_lifetime(timeframe, Config.FORECAST_CANDLES)
+                        trade_entry_time = None
+                        if bot_id:
+                            try:
+                                import requests as _req
+                                resp = _req.get(
+                                    f"http://localhost:8001/api/trades"
+                                    f"?bot_id={bot_id}&symbol={symbol}&status=open&limit=5",
+                                    timeout=5,
+                                )
+                                if resp.ok:
+                                    data = resp.json()
+                                    trade_list = data.get("trades", []) if isinstance(data, dict) else data
+                                    for t in trade_list:
+                                        entry = t.get("entry_time") or t.get("timestamp") or t.get("created_at")
+                                        if entry:
+                                            trade_entry_time = entry
+                                            break
+                            except Exception:
+                                pass
 
-            _run_full_analysis(symbol, timeframe, execute_trades)
+                        if trade_entry_time:
+                            try:
+                                entry_dt = datetime.fromisoformat(
+                                    trade_entry_time.replace("Z", "+00:00")
+                                )
+                                if entry_dt.tzinfo is None:
+                                    entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+                                age_seconds = (datetime.now(timezone.utc) - entry_dt).total_seconds()
+
+                                if age_seconds >= max_lifetime:
+                                    age_minutes = age_seconds / 60
+                                    max_minutes = max_lifetime / 60
+                                    logger.warning(
+                                        f"Time-exit: position on {symbol} aged out "
+                                        f"({age_minutes:.0f}m >= {max_minutes:.0f}m) — force closing"
+                                    )
+                                    emit_event({
+                                        "type": "time_exit",
+                                        "symbol": symbol,
+                                        "age_minutes": round(age_minutes),
+                                        "max_minutes": round(max_minutes),
+                                        "message": (
+                                            f"Position aged out ({age_minutes:.0f}m > {max_minutes:.0f}m). "
+                                            f"Force closing."
+                                        ),
+                                    })
+                                    _force_close_position(symbol, adapter)
+                                    # Clear position from memory
+                                    memory["current_position"] = None
+                                    memory["pyramid_count"] = 0
+                                    memory["pyramid_entries"] = []
+                                    save_memory(bot_id, memory)
+                                    logger.info("Time exit complete. Running analysis for potential re-entry...")
+                                    time.sleep(3)
+                            except Exception as e:
+                                logger.warning(f"Time-exit age check failed for {symbol}: {e}")
+
+                except Exception as e:
+                    logger.warning(f"Position/time check failed for {symbol}: {e} — proceeding with analysis")
+                    memory = load_memory(bot_id)  # re-load in case exception happened mid-load
+
+                # ── Always run full LLM analysis ───────────────────────────────
+                result = _run_full_analysis(symbol, timeframe, execute_trades=True)
+
+                # ── Update memory with this cycle's result ─────────────────────
+                if result:
+                    decision = result.get("decision", {}) or {}
+                    trade = result.get("trade_result", {}) or {}
+                    cycle_action = decision.get("decision", "SKIP") if isinstance(decision, dict) else "SKIP"
+
+                    # For ADD/CLOSE actions, use current price as "entry_price" in memory
+                    entry_price = decision.get("entry_price", 0) if isinstance(decision, dict) else 0
+                    position_size = decision.get("position_size_usd", 0) if isinstance(decision, dict) else 0
+
+                    # Only count a new position open if trade was actually executed
+                    if cycle_action in ("LONG", "SHORT") and trade.get("status") != "executed":
+                        cycle_action = "SKIP"  # Trade didn't go through — don't record as open
+
+                    memory = update_memory_after_cycle(
+                        memory=memory,
+                        cycle_result={
+                            "decision": cycle_action,
+                            "indicator_signal": result.get("indicator_signal", "neutral"),
+                            "pattern_signal": result.get("pattern_signal", "neutral"),
+                            "trend_signal": result.get("trend_signal", "neutral"),
+                            "entry_price": entry_price,
+                            "position_size": position_size,
+                            "unrealized_pnl": None,
+                        },
+                        symbol=symbol,
+                        timeframe=timeframe,
+                    )
+                    save_memory(bot_id, memory)
+
+            else:
+                # Dry-run: no memory, no position check
+                _run_full_analysis(symbol, timeframe, execute_trades=False)
+
             _send_heartbeat()
 
         except Exception as e:

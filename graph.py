@@ -154,16 +154,44 @@ def run_analysis(
                 )
 
         decision = result.get("decision", {})
-        if decision.get("decision") == "SKIP":
+        action = decision.get("decision", "")
+
+        if action == "SKIP":
             emit_event({
                 "type": "decision_skip",
                 "symbol": symbol,
                 "reasoning": decision.get("justification", ""),
                 "message": "Agents couldn't agree — skipping trade. Saved ~$0.033 + trade risk.",
             })
-        elif decision.get("decision"):
+        elif action == "HOLD":
+            emit_event({
+                "type": "hold",
+                "symbol": symbol,
+                "message": f"Holding position. {decision.get('justification', '')}",
+            })
+        elif action == "CLOSE_ALL":
+            emit_event({
+                "type": "early_close",
+                "symbol": symbol,
+                "message": f"Contrary signal — closing all. {decision.get('justification', '')}",
+            })
+        elif action in ("ADD_LONG", "ADD_SHORT"):
+            emit_event({
+                "type": "pyramid_add",
+                "symbol": symbol,
+                "direction": action,
+                "size": decision.get("position_size_usd"),
+                "pyramid_number": (decision.get("sizing_details") or {}).get("pyramid_number"),
+                "sl_adjustment": decision.get("sl_adjustment", "maintain"),
+                "message": (
+                    f"Pyramid #{(decision.get('sizing_details') or {}).get('pyramid_number', '?')}: "
+                    f"{action.replace('ADD_', '')} ${decision.get('position_size_usd', 0):.0f} "
+                    f"(SL: {decision.get('sl_adjustment', 'maintain')})"
+                ),
+            })
+        elif action:
             emit_decision(
-                direction=decision.get("decision", ""),
+                direction=action,
                 entry=decision.get("entry_price", 0),
                 sl=decision.get("stop_loss", 0),
                 tp=decision.get("take_profit", 0),

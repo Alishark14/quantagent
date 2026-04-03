@@ -122,6 +122,11 @@ def init_db() -> None:
             conn.execute("ALTER TABLE trades ADD COLUMN unrealized_pnl REAL DEFAULT NULL")
         except Exception:
             pass
+        # Add cycle_memory column to bots if not present (migration)
+        try:
+            conn.execute("ALTER TABLE bots ADD COLUMN cycle_memory TEXT DEFAULT '{}'")
+        except Exception:
+            pass
         # Clear bad realized_pnl values that were incorrectly set on open trades
         conn.execute(
             "UPDATE trades SET realized_pnl = NULL WHERE status = 'open' AND realized_pnl IS NOT NULL"
@@ -655,6 +660,29 @@ def get_api_cost_stats(bot_id: str = None, days: int = None, mode: str = None) -
             "by_bot": by_bot,
             "monthly_estimate": monthly_estimate,
         }
+
+
+def get_bot_memory(bot_id: str) -> dict:
+    """Get bot's cycle memory from DB."""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT cycle_memory FROM bots WHERE id = ?", (bot_id,)
+        ).fetchone()
+        if row and row[0]:
+            try:
+                return json.loads(row[0])
+            except Exception:
+                return {}
+        return {}
+
+
+def update_bot_memory(bot_id: str, memory: dict) -> None:
+    """Update bot's cycle memory in DB."""
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE bots SET cycle_memory = ? WHERE id = ?",
+            (json.dumps(memory), bot_id),
+        )
 
 
 def get_trade_stats(bot_id: str = None, mode: str = None) -> dict:

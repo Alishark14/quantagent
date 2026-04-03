@@ -26,6 +26,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 # Load .env before any LangChain/LangSmith imports so tracing is initialized correctly
@@ -220,7 +221,11 @@ def _handle_open_position(symbol: str, timeframe: str, adapter) -> None:
                     ),
                 })
                 _force_close_position(symbol, adapter)
-                return
+
+                # Position closed — immediately run analysis for potential re-entry
+                logger.info("Time exit complete. Running analysis for potential re-entry...")
+                time.sleep(3)  # Brief pause to let exchange settle
+                return _run_full_analysis(symbol, timeframe, execute_trades=True)
 
             # ── Still within lifetime — skip ─────────────────────────────────
             logger.info(

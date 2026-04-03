@@ -146,6 +146,15 @@ async def lifespan(app: FastAPI):
                     f"Startup cleanup: bot '{bot['name']}' had dead PID {pid}, reset to stopped"
                 )
 
+    # Fix any trades wrongly closed during the previous session before new loops run
+    try:
+        from utils.position_sync import sync_and_update_db
+        fixes = await asyncio.to_thread(sync_and_update_db)
+        if fixes > 0:
+            logger.info(f"Startup sync: reopened {fixes} incorrectly closed trade(s)")
+    except Exception as e:
+        logger.warning(f"Startup position sync failed (non-fatal): {e}")
+
     guardian_task = asyncio.create_task(guardian_loop())
     logger.info("Position Guardian started")
     tracker_task = asyncio.create_task(tracker_loop())
@@ -929,6 +938,23 @@ async def record_trade_close(data: dict):
 def api_costs_stats(bot_id: str = Query(""), days: int = Query(None), mode: str = Query("all")):
     """Return API cost statistics aggregated from all recorded trading cycles."""
     return get_api_cost_stats(bot_id=bot_id or None, days=days, mode=mode if mode != "all" else None)
+
+
+@app.post("/api/debug/sync-positions")
+async def debug_sync_positions():
+    """Force a position sync right now — fixes trades wrongly marked closed.
+    Call this once after a fix to repair existing records without waiting for
+    the next tracker cycle.
+    """
+    try:
+        from utils.position_sync import sync_and_update_db, _position_cache, _cache_expiry
+        # Clear cache so we get a fresh exchange query
+        _position_cache.clear()
+        _cache_expiry.clear()
+        fixes = await asyncio.to_thread(sync_and_update_db)
+        return {"status": "ok", "trades_reopened": fixes}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 @app.get("/api/debug/trades")

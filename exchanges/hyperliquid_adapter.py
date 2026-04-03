@@ -69,6 +69,31 @@ SYMBOL_MAP = {
 HIP3_SYMBOLS: set[str] = {v for v in SYMBOL_MAP.values() if v.startswith("XYZ-")}
 
 
+def _pos_size(pos: dict) -> float:
+    """Extract position size from a CCXT position dict.
+
+    CCXT normalizes perp size into 'contracts', but for HIP-3 markets the
+    field may be missing or zero while the actual size lives in the raw
+    Hyperliquid response under info.szi.  Check both.
+    """
+    contracts = pos.get("contracts")
+    if contracts is not None:
+        try:
+            val = float(contracts)
+            if val != 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+    # Fallback: Hyperliquid native field (signed — negative = short)
+    szi = pos.get("info", {}).get("szi")
+    if szi is not None:
+        try:
+            return abs(float(szi))
+        except (TypeError, ValueError):
+            pass
+    return 0.0
+
+
 class HyperliquidAdapter(ExchangeAdapter):
     name = "hyperliquid"
 
@@ -326,13 +351,18 @@ class HyperliquidAdapter(ExchangeAdapter):
         try:
             positions = self._exchange.fetch_positions([ex_symbol], extra) or []
             for pos in positions:
-                contracts = pos.get("contracts")
-                if contracts and abs(float(contracts)) > 0:
+                size = _pos_size(pos)
+                if size and abs(size) > 0:
                     return True
             return False
         except Exception as e:
-            logger.warning(f"Hyperliquid position check failed for {symbol}: {e}")
-            return False
+            # Conservative fallback: if we cannot verify, assume open to prevent
+            # the tracker from falsely closing a live position due to an API error.
+            logger.warning(
+                f"Hyperliquid position check failed for {symbol}: {e} — "
+                f"assuming open (conservative)"
+            )
+            return True
 
     def get_open_positions(self) -> list[Position]:
         result = []
@@ -340,30 +370,30 @@ class HyperliquidAdapter(ExchangeAdapter):
         try:
             positions = self._exchange.fetch_positions()
             for pos in positions:
-                contracts = pos.get("contracts")
-                if contracts and abs(float(contracts)) > 0:
+                size = _pos_size(pos)
+                if size and abs(size) > 0:
                     result.append(Position(
                         symbol=pos["symbol"],
                         side=pos.get("side", "long"),
-                        size=abs(float(contracts)),
-                        entry_price=float(pos.get("entryPrice") or 0),
+                        size=abs(size),
+                        entry_price=float(pos.get("entryPrice") or pos.get("info", {}).get("entryPx") or 0),
                         unrealized_pnl=float(pos.get("unrealizedPnl") or 0),
                         raw=pos,
                     ))
         except Exception as e:
             logger.error(f"Hyperliquid get_open_positions (perp) failed: {e}")
 
-        # Also fetch HIP-3 positions
+        # Also fetch HIP-3 positions (commodities, indices, stocks, forex)
         try:
             hip3_positions = self._exchange.fetch_positions(params={"dex": "xyz"})
             for pos in hip3_positions:
-                contracts = pos.get("contracts")
-                if contracts and abs(float(contracts)) > 0:
+                size = _pos_size(pos)
+                if size and abs(size) > 0:
                     result.append(Position(
                         symbol=pos["symbol"],
                         side=pos.get("side", "long"),
-                        size=abs(float(contracts)),
-                        entry_price=float(pos.get("entryPrice") or 0),
+                        size=abs(size),
+                        entry_price=float(pos.get("entryPrice") or pos.get("info", {}).get("entryPx") or 0),
                         unrealized_pnl=float(pos.get("unrealizedPnl") or 0),
                         raw=pos,
                     ))

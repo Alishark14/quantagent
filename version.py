@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.8"
+__version__ = "0.5.9"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,19 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.9",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "HIP-3 Position Fix",
+        "changes": [
+            "Fix: hyperliquid_adapter.has_open_position() now returns True on exception (conservative, matches dYdX behavior) — was returning False, causing tracker to falsely close live HIP-3 positions",
+            "Fix: hyperliquid_adapter.get_open_positions() now uses _pos_size() helper that falls back to info.szi (Hyperliquid native field) if CCXT 'contracts' is missing/zero for HIP-3 markets",
+            "Add: _pos_size() helper function for robust position size extraction from CCXT dicts",
+            "Add: startup position sync in lifespan — runs sync_and_update_db() on backend start to fix any wrongly-closed trades from previous session",
+            "Add: POST /api/debug/sync-positions endpoint — manually trigger fresh exchange sync with cache cleared",
         ],
     },
     {

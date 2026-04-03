@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.9.0"
+__version__ = "1.0.0"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -70,6 +70,24 @@ def compute_cycle_cost(
 
 
 VERSION_HISTORY = [
+    {
+        "version": "1.0.0",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Smart SL/TP Strategy",
+        "changes": [
+            "Add: TIMEFRAME_PROFILES in config.py — per-timeframe ATR multiplier and RR defaults (15m/30m/1h/4h/1d)",
+            "Add: utils/swing_detection.py — find_swing_lows(), find_swing_highs(), adjust_sl_to_structure()",
+            "Add: Structural SL in DecisionAgent — snaps SL to nearest swing low/high within ±15% of ATR SL (buffer 0.2%)",
+            "Add: TrendAgent now reports SWING_LOWS/SWING_HIGHS from chart image; parsed into state.trend_swing_lows/highs",
+            "Add: Partial scaling — TP1 closes 50% at 1×ATR, TP2 closes remaining 50% at SL_dist×RR",
+            "Add: Trailing stop for 4h+ bots — utils/trailing_monitor.py (Chandelier Exit, 30s poll, daemon thread)",
+            "Add: DecisionAgent can suggest atr_multiplier in JSON output (clamped ±30% of timeframe default)",
+            "Add: uses_trailing_stop, sl_type ('structural'/'atr'), take_profit_1, take_profit_2 in decision dict",
+            "Add: trailing_sl_update event card (cyan/teal) in BotPeekDrawer and LiveMonitor",
+            "Fix: Sub-4h bots get fixed TP2; 4h+ bots get Chandelier trailing stop for second half",
+        ],
+    },
     {
         "version": "0.9.0",
         "date": "2026.04.03",

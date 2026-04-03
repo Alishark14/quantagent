@@ -188,6 +188,16 @@ def execute_trade_node(state: dict) -> dict:
         # ── SL / TP ───────────────────────────────────────────────────────────
         if adapter.supports_native_sl_tp():
             # Exchange handles SL/TP natively (Hyperliquid, Deribit)
+
+            # Partial scaling: split position into two halves
+            qty_half_1 = round(quantity * 0.5, 8)  # TP1 — quick first exit
+            qty_half_2 = quantity - qty_half_1       # TP2 / trailing — let winner run
+
+            tp1 = float(decision.get("take_profit_1", decision.get("take_profit", take_profit)))
+            tp2 = float(decision.get("take_profit_2", take_profit))
+            uses_trailing = bool(decision.get("uses_trailing_stop", False))
+
+            # SL covers the full position
             sl_result = adapter.place_stop_loss(
                 symbol, close_side, quantity, stop_loss
             )
@@ -226,13 +236,40 @@ def execute_trade_node(state: dict) -> dict:
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }}
 
-            tp_result = adapter.place_take_profit(
-                symbol, close_side, quantity, take_profit
-            )
+            # TP1 — first 50% at quick target (1 ATR from entry)
+            tp1_result = adapter.place_take_profit(symbol, close_side, qty_half_1, tp1)
             logger.info(
-                f"SL set: {sl_result.order_id} | "
-                f"TP: {tp_result.order_id if tp_result else 'failed (non-critical)'}"
+                f"SL: {sl_result.order_id} | "
+                f"TP1 (50%@{tp1}): {tp1_result.order_id if tp1_result else 'failed (non-critical)'}"
             )
+
+            if uses_trailing:
+                # 4h+ bots: trail the remaining 50% with a Chandelier Exit
+                import os as _os2
+                from utils.trailing_monitor import start_trailing_monitor
+                start_trailing_monitor(
+                    adapter=adapter,
+                    symbol=symbol,
+                    direction=direction,
+                    quantity=qty_half_2,
+                    entry_price=current_price,
+                    atr_value=float(decision.get("atr_value", 0)),
+                    atr_multiplier=float(decision.get("atr_multiplier_used", 1.5)),
+                    initial_sl=stop_loss,
+                    timeframe=state.get("timeframe", Config.TIMEFRAME),
+                    bot_id=_os2.getenv("BOT_ID", ""),
+                )
+                logger.info(
+                    f"Trailing stop started for remaining {qty_half_2} {symbol} "
+                    f"({decision.get('atr_multiplier_used', 1.5)}× ATR trailing)"
+                )
+            else:
+                # Sub-4h bots: fixed TP2 for remaining 50%
+                tp2_result = adapter.place_take_profit(symbol, close_side, qty_half_2, tp2)
+                logger.info(
+                    f"TP2 (50%@{tp2}): {tp2_result.order_id if tp2_result else 'failed (non-critical)'}"
+                )
+
             sl_type = "native"
 
         else:
@@ -264,9 +301,13 @@ def execute_trade_node(state: dict) -> dict:
             "quantity": quantity,
             "entry_price": current_price,
             "stop_loss": stop_loss,
-            "take_profit": take_profit,
+            "take_profit": decision.get("take_profit_1", take_profit),
+            "take_profit_1": decision.get("take_profit_1", take_profit),
+            "take_profit_2": decision.get("take_profit_2", take_profit),
             "position_size_usd": position_size_usd,
-            "sl_type": sl_type,
+            "sl_type": decision.get("sl_type", sl_type),  # "structural"/"atr"/"native"
+            "uses_trailing_stop": decision.get("uses_trailing_stop", False),
+            "atr_multiplier_used": decision.get("atr_multiplier_used"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "justification": decision.get("justification", ""),
         }

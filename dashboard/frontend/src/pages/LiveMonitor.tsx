@@ -30,6 +30,11 @@ interface BotEvent {
   sl_order_id?: string
   tp_order_id?: string
   native?: boolean
+  // trailing_sl_update
+  old_sl?: number
+  new_sl?: number
+  peak_price?: number
+  trail_distance?: number
   symbol?: string
   timeframe?: string
   total_cost?: number
@@ -365,6 +370,34 @@ function CycleCostCard({ event }: { event: BotEvent }) {
   )
 }
 
+function TrailingSlUpdateCard({ event }: { event: BotEvent }) {
+  return (
+    <div className="bg-[#0d1a1a] border border-[#0e7490]/40 rounded-lg px-3 py-2 space-y-1">
+      <BotLabel event={event} />
+      <div className="flex items-center gap-2">
+        <span className="text-sm">📈</span>
+        <span className="text-[#22d3ee] text-xs font-semibold">Trailing SL Updated</span>
+        <span className="text-[#164e63] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+      </div>
+      <div className="flex gap-3 text-[10px] pl-6">
+        <span className="text-[#0e7490]">
+          <span className="font-mono text-[#6b7280]">{event.old_sl?.toFixed(4)}</span>
+          {' → '}
+          <span className="font-mono text-[#22d3ee]">{event.new_sl?.toFixed(4)}</span>
+        </span>
+        {event.peak_price != null && (
+          <span className="text-[#0e7490]">
+            Peak <span className="font-mono text-[#67e8f9]">{event.peak_price.toFixed(4)}</span>
+          </span>
+        )}
+        {event.symbol && (
+          <span className="text-[#164e63] font-mono">{event.symbol}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function DecisionSkipCard({ event }: { event: BotEvent }) {
   return (
     <div className="px-2 py-1.5 opacity-70 space-y-0.5">
@@ -392,6 +425,7 @@ function EventCard({ event }: { event: BotEvent }) {
     case 'decision_skip': return <DecisionSkipCard event={event} />
     case 'trade_execution': return <TradeExecutionCard event={event} />
     case 'sl_tp_placed': return <SlTpCard event={event} />
+    case 'trailing_sl_update': return <TrailingSlUpdateCard event={event} />
     case 'cycle_start': return <CycleStartCard event={event} />
     case 'cycle_skip': return <CycleSkipCard event={event} />
     case 'time_exit': return <TimeExitCard event={event} />

@@ -40,6 +40,10 @@ class QuantAgentState(TypedDict):
     # Execution result
     trade_result: dict  # {order_id, entry_price, stop_loss, take_profit, status}
 
+    # Swing levels extracted by TrendAgent from the chart image
+    trend_swing_lows: list[float]
+    trend_swing_highs: list[float]
+
     # Token usage per agent (input_tokens, output_tokens)
     indicator_usage: dict
     pattern_usage: dict

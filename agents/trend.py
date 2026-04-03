@@ -40,6 +40,10 @@ Provide your analysis covering:
 
 End with a clear 1-2 sentence SUMMARY of the trend direction and your confidence level.
 
+Then identify the 2-3 nearest significant swing lows and swing highs visible on the chart and output them on two separate lines (use actual price numbers from the chart, comma-separated):
+SWING_LOWS: price1, price2, price3
+SWING_HIGHS: price1, price2, price3
+
 On the very last line of your response, output exactly one of:
 SIGNAL: BULLISH
 SIGNAL: BEARISH
@@ -76,11 +80,44 @@ def trend_agent_node(state: dict) -> dict:
     match = re.search(r"SIGNAL:\s*(BULLISH|BEARISH|NEUTRAL)", report, re.IGNORECASE)
     trend_signal = match.group(1).lower() if match else "neutral"
 
-    logger.info(f"TrendAgent: Report generated. Signal: {trend_signal}. Tokens — input: {usage['input_tokens']}, output: {usage['output_tokens']}")
+    # Parse swing levels reported by the LLM from the chart image
+    trend_swing_lows: list[float] = []
+    trend_swing_highs: list[float] = []
+
+    lows_match = re.search(r"SWING_LOWS?:\s*([\d.,\s]+)", report, re.IGNORECASE)
+    highs_match = re.search(r"SWING_HIGHS?:\s*([\d.,\s]+)", report, re.IGNORECASE)
+
+    if lows_match:
+        try:
+            trend_swing_lows = [
+                float(x.strip().replace(",", ""))
+                for x in re.split(r"[,\s]+", lows_match.group(1).strip())
+                if x.strip()
+            ]
+        except ValueError:
+            pass
+
+    if highs_match:
+        try:
+            trend_swing_highs = [
+                float(x.strip().replace(",", ""))
+                for x in re.split(r"[,\s]+", highs_match.group(1).strip())
+                if x.strip()
+            ]
+        except ValueError:
+            pass
+
+    logger.info(
+        f"TrendAgent: Signal={trend_signal} | "
+        f"swing lows={trend_swing_lows} | swing highs={trend_swing_highs} | "
+        f"Tokens — input: {usage['input_tokens']}, output: {usage['output_tokens']}"
+    )
     return {
         "trend_report": report,
         "trend_signal": trend_signal,
         "trend_params": trend_params,
         "chart_trend_img": chart_b64,
         "trend_usage": usage,
+        "trend_swing_lows": trend_swing_lows,
+        "trend_swing_highs": trend_swing_highs,
     }

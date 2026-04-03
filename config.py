@@ -4,6 +4,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# ── Timeframe-aware risk profiles ─────────────────────────────────────────────
+# Lower timeframes need tighter stops and lower RR (scalp mentality).
+# Higher timeframes reward asymmetric trades with wide targets and trailing stops.
+
+TIMEFRAME_PROFILES: dict[str, dict] = {
+    "15m": {"atr_multiplier": 2.5, "rr_min": 0.8,  "rr_max": 1.2},
+    "30m": {"atr_multiplier": 2.0, "rr_min": 1.0,  "rr_max": 1.5},
+    "1h":  {"atr_multiplier": 1.5, "rr_min": 1.5,  "rr_max": 2.0},
+    "4h":  {"atr_multiplier": 1.0, "rr_min": 3.0,  "rr_max": 5.0},
+    "1d":  {"atr_multiplier": 1.0, "rr_min": 3.0,  "rr_max": 5.0},
+}
+
+TIMEFRAME_STRATEGIES: dict[str, str] = {
+    "15m": "Scalp mode. Short timeframes are noisy — use a wide stop (2.5×ATR) to avoid getting shaken out. Grab profit fast at 0.8–1.2 RR before the move fades.",
+    "30m": "Quick trades. Wide stop (2.0×ATR) absorbs noise. Take profit quickly at 1.0–1.5 RR — do not overstay.",
+    "1h":  "Standard setups. Balanced stop (1.5×ATR). Classic patterns work here. Target 1.5–2.0 RR.",
+    "4h":  "Asymmetric trades. Cleaner signals allow a tighter stop (1.0×ATR). Large target 3–5 RR. Trail the stop for the second half — never cap the upside with a fixed TP2.",
+    "1d":  "Macro moves. Tight stop (1.0×ATR), massive target 3–5 RR. Trail the stop indefinitely — never cap upside.",
+}
+
+
+def get_timeframe_profile(timeframe: str) -> dict:
+    """Return the risk profile for a given timeframe, defaulting to 1h."""
+    return TIMEFRAME_PROFILES.get(timeframe, TIMEFRAME_PROFILES["1h"])
+
+
 class Secrets:
     """Secrets and infrastructure — loaded from .env only. Never set these from CLI or dashboard."""
 

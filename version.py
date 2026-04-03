@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.6"
+__version__ = "0.5.7"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,18 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.7",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Live Log Path Fix",
+        "changes": [
+            "Fix: app.py PROJECT_ROOT now uses Path(__file__).resolve() — fixes 'No log file found' when uvicorn starts from dashboard/backend/ and __file__ is a bare filename with no path component",
+            "Fix: process_manager.py PROJECT_ROOT same fix for consistency",
+            "Fix: sys.path.insert in app.py now uses the already-resolved PROJECT_ROOT (moved before the insert call)",
+            "Add: /api/debug/log-paths/{bot_id} endpoint — shows exact paths checked, which exist, and all bot.log files on disk",
         ],
     },
     {

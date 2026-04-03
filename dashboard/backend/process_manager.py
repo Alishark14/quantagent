@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 _processes: dict[str, subprocess.Popen] = {}
 
 # quantagentpaper/ root (three levels up from dashboard/backend/)
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+# .resolve() ensures absolute path even when __file__ is relative
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def start_bot(bot_config: dict) -> int:

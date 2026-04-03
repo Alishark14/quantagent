@@ -9,15 +9,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Allow importing from the root quantagent package
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# .resolve() ensures an absolute path even when __file__ is relative (e.g. uvicorn run from dashboard/backend/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel as _BaseModel
 
 logger = logging.getLogger(__name__)
-
-PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 from version import __version__, __version_date__, __version_full__, __phase__
 
@@ -510,13 +510,49 @@ async def get_exchange_status():
 
 @app.get("/api/debug/log-paths")
 async def debug_log_paths():
-    """Show where log files actually are."""
+    """Show where log files actually are (global scan)."""
     import glob as _glob
     all_logs = _glob.glob(str(PROJECT_ROOT / "trade_logs" / "**" / "*.log"), recursive=True)
     return {
         "project_root": str(PROJECT_ROOT),
-        "log_files_found": all_logs,
+        "project_root_exists": PROJECT_ROOT.exists(),
         "cwd": os.getcwd(),
+        "log_files_found": all_logs,
+    }
+
+
+@app.get("/api/debug/log-paths/{bot_id}")
+async def debug_log_paths_for_bot(bot_id: str):
+    """Show exactly where the dashboard looks for a specific bot's log file."""
+    import glob as _glob
+    bot = get_bot(bot_id)
+    if not bot:
+        return {"error": "bot not found"}
+
+    symbol = bot.get("symbol", "").lower()
+    mode = bot.get("trading_mode", "paper")
+
+    possible_paths = [
+        PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log",
+        PROJECT_ROOT / "trade_logs" / mode / symbol.replace("-", "") / "bot.log",
+        PROJECT_ROOT / "trade_logs" / symbol / "bot.log",
+    ]
+    all_bot_logs = _glob.glob(str(PROJECT_ROOT / "**" / "bot.log"), recursive=True)
+    trade_log_dirs = _glob.glob(str(PROJECT_ROOT / "trade_logs" / "**"), recursive=True)
+
+    return {
+        "project_root": str(PROJECT_ROOT),
+        "project_root_exists": PROJECT_ROOT.exists(),
+        "cwd": os.getcwd(),
+        "bot_symbol": bot.get("symbol"),
+        "bot_mode": mode,
+        "expected_path": str(possible_paths[0]),
+        "expected_exists": possible_paths[0].exists(),
+        "all_paths_checked": [
+            {"path": str(p), "exists": p.exists()} for p in possible_paths
+        ],
+        "all_bot_logs_on_disk": all_bot_logs,
+        "trade_log_dirs": trade_log_dirs[:50],
     }
 
 

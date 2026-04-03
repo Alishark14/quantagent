@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, Edit2, Play, PauseCircle, Square, RefreshCw, Circle } from 'lucide-react'
-import { api } from '../api/client'
+import { api, getWsUrl } from '../api/client'
 import type { AgentsData, Bot, TradeRecord } from '../types'
 import EquityCurve from '../components/overview/EquityCurve'
 import AgentAccuracy from '../components/agents/AgentAccuracy'
@@ -86,7 +86,7 @@ export default function BotDetail({ refreshTick }: Props) {
   useEffect(() => {
     if (activeTab !== 'log' || !id) return
 
-    const ws = new WebSocket(`ws://localhost:8001/ws/bots/${id}/logs`)
+    const ws = new WebSocket(getWsUrl(`/ws/bots/${id}/logs`))
     wsRef.current = ws
 
     ws.onopen = () => setWsConnected(true)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, ChevronDown, ChevronUp, Circle, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { getWsUrl } from '../../api/client'
 
 interface BotEvent {
   type: string
@@ -345,7 +346,7 @@ export default function BotPeekDrawer({ botId, botName, botSymbol, onClose, onVi
       })
       .catch(() => {})
 
-    const ws = new WebSocket(`ws://localhost:8001/ws/bots/${botId}/events`)
+    const ws = new WebSocket(getWsUrl(`/ws/bots/${botId}/events`))
 
     ws.onopen = () => setConnected(true)
     ws.onclose = () => setConnected(false)

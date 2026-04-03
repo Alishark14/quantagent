@@ -15,7 +15,13 @@ import type {
   TradesResponse,
 } from '../types'
 
-const BASE_URL = 'http://localhost:8001'
+const BASE_URL = ''
+
+export const getWsUrl = (path: string): string => {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.host
+  return `${protocol}//${host}${path}`
+}
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`)

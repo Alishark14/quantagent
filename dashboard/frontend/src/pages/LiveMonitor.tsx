@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Circle, ChevronDown, ChevronUp, Filter } from 'lucide-react'
 import type { Bot } from '../types'
+import { getWsUrl } from '../api/client'
 
 // ── Event type ────────────────────────────────────────────────────────────────
 
@@ -414,7 +415,7 @@ export default function LiveMonitor() {
 
   // Fetch running bots on mount
   useEffect(() => {
-    fetch('http://localhost:8001/api/bots')
+    fetch('/api/bots')
       .then(r => r.json())
       .then((all: Bot[]) => {
         const running = all.filter(b => b.status === 'running')
@@ -431,7 +432,7 @@ export default function LiveMonitor() {
 
     for (const bot of bots) {
       // Load cached events first
-      fetch(`http://localhost:8001/api/bots/${bot.id}/events`)
+      fetch(`/api/bots/${bot.id}/events`)
         .then(r => r.json())
         .then((cached: BotEvent[]) => {
           if (!Array.isArray(cached) || cached.length === 0) return
@@ -450,7 +451,7 @@ export default function LiveMonitor() {
         .catch(() => {})
 
       const seenTimestamps = new Set<string>()
-      const ws = new WebSocket(`ws://localhost:8001/ws/bots/${bot.id}/events`)
+      const ws = new WebSocket(getWsUrl(`/ws/bots/${bot.id}/events`))
 
       ws.onopen = () =>
         setConnectedBots(prev => new Set([...prev, bot.id]))

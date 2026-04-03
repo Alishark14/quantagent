@@ -37,9 +37,12 @@ interface BotEvent {
   // cycle_cost
   total_cost?: number
   agents?: Record<string, number>
-  // cycle_skip
+  // cycle_skip / time_exit
   reason?: string
   message?: string
+  age_minutes?: number
+  max_minutes?: number
+  remaining_minutes?: number
 }
 
 interface Props {
@@ -221,14 +224,47 @@ function CycleStartCard({ event }: { event: BotEvent }) {
 }
 
 function CycleSkipCard({ event }: { event: BotEvent }) {
+  const hasAge = event.age_minutes != null && event.max_minutes != null
+  const remaining = event.remaining_minutes
   return (
-    <div className="flex items-center gap-2 px-1 py-0.5 opacity-60">
-      <span className="text-sm">⏭️</span>
-      <span className="text-[#6b7280] text-xs">
-        Cycle skipped — position open on{' '}
-        <span className="font-mono text-[#9ca3af]">{event.symbol}</span>
-      </span>
-      <span className="text-[#4b5563] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+    <div className="px-2 py-1.5 opacity-60 space-y-0.5">
+      <div className="flex items-center gap-2">
+        <span className="text-sm">⏭️</span>
+        <span className="text-[#6b7280] text-xs font-medium">
+          Waiting — position open on{' '}
+          <span className="font-mono text-[#9ca3af]">{event.symbol}</span>
+        </span>
+        <span className="text-[#4b5563] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+      </div>
+      {hasAge && (
+        <div className="flex items-center gap-2 pl-6 text-[10px] text-[#4b5563]">
+          <span>{event.age_minutes}m / {event.max_minutes}m elapsed</span>
+          {remaining != null && remaining > 0 && (
+            <span className="text-[#374151]">· {remaining}m remaining</span>
+          )}
+          <span className="ml-auto">Saved ~$0.033</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TimeExitCard({ event }: { event: BotEvent }) {
+  return (
+    <div className="bg-[#1c1400] border border-[#78350f]/40 rounded-lg px-3 py-2 space-y-1">
+      <div className="flex items-center gap-2">
+        <span className="text-sm">⏰</span>
+        <span className="text-[#f59e0b] text-xs font-semibold">Time Exit</span>
+        <span className="text-[#78350f] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+      </div>
+      <div className="text-[#d97706] text-xs pl-6">
+        Position aged out on{' '}
+        <span className="font-mono text-[#fbbf24]">{event.symbol}</span>
+        {event.age_minutes != null && event.max_minutes != null && (
+          <span className="text-[#92400e]"> ({event.age_minutes}m &gt; {event.max_minutes}m)</span>
+        )}
+      </div>
+      <div className="text-[#78350f] text-[10px] pl-6">Force closing position.</div>
     </div>
   )
 }
@@ -253,6 +289,7 @@ function EventCard({ event }: { event: BotEvent }) {
     case 'sl_tp_placed': return <SlTpCard event={event} />
     case 'cycle_start': return <CycleStartCard event={event} />
     case 'cycle_skip': return <CycleSkipCard event={event} />
+    case 'time_exit':  return <TimeExitCard event={event} />
     case 'cycle_cost': return <CycleCostCard event={event} />
     default: return null
   }

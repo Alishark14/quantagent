@@ -123,6 +123,20 @@ def emit_cycle_skip(symbol: str):
     })
 
 
+def emit_time_exit(symbol: str, age_minutes: float, max_minutes: float):
+    """Emit when a position is force-closed due to max lifetime exceeded."""
+    emit_event({
+        "type": "time_exit",
+        "symbol": symbol,
+        "age_minutes": round(age_minutes),
+        "max_minutes": round(max_minutes),
+        "message": (
+            f"Position aged out ({age_minutes:.0f}m > {max_minutes:.0f}m). "
+            f"Force closing."
+        ),
+    })
+
+
 def emit_cycle_cost(total_cost: float, agent_costs: dict):
     """Emit cycle cost summary."""
     emit_event({

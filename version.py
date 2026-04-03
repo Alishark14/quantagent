@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.5"
+__version__ = "0.5.6"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,22 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.6",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Time-Based Exit",
+        "changes": [
+            "Add: utils/helpers.py — timeframe_to_seconds() and max_position_lifetime() helpers",
+            "Refactor: main.py — run_cycle() split into _handle_open_position(), _force_close_position(), _run_full_analysis()",
+            "Feat: _handle_open_position() checks position age vs max_position_lifetime(timeframe, FORECAST_CANDLES)",
+            "Feat: _force_close_position() cancels SL/TP orders, market-closes, reports to /api/internal/trade/close",
+            "Fix: scheduler now uses seconds=timeframe_to_seconds(tf) instead of hardcoded interval_map (supports 1d)",
+            "Add: TimeExitCard in BotPeekDrawer — amber/orange card for time_exit events",
+            "Update: CycleSkipCard now shows age/remaining minutes",
+            "Add: emit_time_exit() convenience function in event_emitter.py",
         ],
     },
     {

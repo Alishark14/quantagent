@@ -214,6 +214,81 @@ function ErrMsg({ msg }: { msg?: string }) {
   return <p className="text-[#ef4444] text-xs mt-1">{msg}</p>
 }
 
+// ── Static data ────────────────────────────────────────────────────────────
+
+const SYMBOL_GROUPS = [
+  {
+    label: 'Crypto',
+    options: [
+      { value: 'BTC-USDC',  label: 'BTC-USDC (Bitcoin)' },
+      { value: 'ETH-USDC',  label: 'ETH-USDC (Ethereum)' },
+      { value: 'SOL-USDC',  label: 'SOL-USDC (Solana)' },
+      { value: 'DOGE-USDC', label: 'DOGE-USDC (Dogecoin)' },
+      { value: 'AVAX-USDC', label: 'AVAX-USDC (Avalanche)' },
+      { value: 'LINK-USDC', label: 'LINK-USDC (Chainlink)' },
+      { value: 'HYPE-USDC', label: 'HYPE-USDC (Hyperliquid)' },
+      { value: 'XPL-USDC',  label: 'XPL-USDC (Plasma)' },
+    ],
+  },
+  {
+    label: 'Commodities (HIP-3)',
+    options: [
+      { value: 'GOLD-USDC',      label: 'GOLD-USDC (Gold)' },
+      { value: 'SILVER-USDC',    label: 'SILVER-USDC (Silver)' },
+      { value: 'WTIOIL-USDC',    label: 'WTIOIL-USDC (WTI Crude Oil)' },
+      { value: 'BRENTOIL-USDC',  label: 'BRENTOIL-USDC (Brent Crude)' },
+      { value: 'NATGAS-USDC',    label: 'NATGAS-USDC (Natural Gas)' },
+      { value: 'COPPER-USDC',    label: 'COPPER-USDC (Copper)' },
+      { value: 'PLATINUM-USDC',  label: 'PLATINUM-USDC (Platinum)' },
+      { value: 'PALLADIUM-USDC', label: 'PALLADIUM-USDC (Palladium)' },
+      { value: 'URANIUM-USDC',   label: 'URANIUM-USDC (Uranium)' },
+      { value: 'WHEAT-USDC',     label: 'WHEAT-USDC (Wheat)' },
+      { value: 'CORN-USDC',      label: 'CORN-USDC (Corn)' },
+      { value: 'ALUMINIUM-USDC', label: 'ALUMINIUM-USDC (Aluminium)' },
+    ],
+  },
+  {
+    label: 'Indices (HIP-3)',
+    options: [
+      { value: 'SP500-USDC',  label: 'SP500-USDC (S&P 500)' },
+      { value: 'JP225-USDC',  label: 'JP225-USDC (Nikkei 225)' },
+      { value: 'VIX-USDC',    label: 'VIX-USDC (Volatility Index)' },
+      { value: 'DXY-USDC',    label: 'DXY-USDC (Dollar Index)' },
+      { value: 'XYZ100-USDC', label: 'XYZ100-USDC (Nasdaq-100)' },
+    ],
+  },
+  {
+    label: 'Stocks (HIP-3)',
+    options: [
+      { value: 'TSLA-USDC',  label: 'TSLA-USDC (Tesla)' },
+      { value: 'NVDA-USDC',  label: 'NVDA-USDC (Nvidia)' },
+      { value: 'AAPL-USDC',  label: 'AAPL-USDC (Apple)' },
+      { value: 'META-USDC',  label: 'META-USDC (Meta)' },
+      { value: 'MSFT-USDC',  label: 'MSFT-USDC (Microsoft)' },
+      { value: 'GOOGL-USDC', label: 'GOOGL-USDC (Google)' },
+      { value: 'AMZN-USDC',  label: 'AMZN-USDC (Amazon)' },
+      { value: 'AMD-USDC',   label: 'AMD-USDC (AMD)' },
+      { value: 'NFLX-USDC',  label: 'NFLX-USDC (Netflix)' },
+      { value: 'PLTR-USDC',  label: 'PLTR-USDC (Palantir)' },
+      { value: 'COIN-USDC',  label: 'COIN-USDC (Coinbase)' },
+      { value: 'MSTR-USDC',  label: 'MSTR-USDC (MicroStrategy)' },
+    ],
+  },
+  {
+    label: 'Forex (HIP-3)',
+    options: [
+      { value: 'EUR-USDC', label: 'EUR-USDC (Euro)' },
+      { value: 'JPY-USDC', label: 'JPY-USDC (Japanese Yen)' },
+    ],
+  },
+  {
+    label: 'Other',
+    options: [
+      { value: '__custom__', label: 'Custom symbol…' },
+    ],
+  },
+]
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function BotModal({ bot, onClose, onSaved }: Props) {
@@ -329,79 +404,6 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
   function handleBackdrop(e: React.MouseEvent<HTMLDivElement>) {
     if (e.target === e.currentTarget) onClose()
   }
-
-  const SYMBOL_GROUPS = [
-    {
-      label: 'Crypto',
-      options: [
-        { value: 'BTC-USDC',  label: 'BTC-USDC (Bitcoin)' },
-        { value: 'ETH-USDC',  label: 'ETH-USDC (Ethereum)' },
-        { value: 'SOL-USDC',  label: 'SOL-USDC (Solana)' },
-        { value: 'DOGE-USDC', label: 'DOGE-USDC (Dogecoin)' },
-        { value: 'AVAX-USDC', label: 'AVAX-USDC (Avalanche)' },
-        { value: 'LINK-USDC', label: 'LINK-USDC (Chainlink)' },
-        { value: 'HYPE-USDC', label: 'HYPE-USDC (Hyperliquid)' },
-        { value: 'XPL-USDC',  label: 'XPL-USDC (Plasma)' },
-      ],
-    },
-    {
-      label: 'Commodities (HIP-3)',
-      options: [
-        { value: 'GOLD-USDC',      label: 'GOLD-USDC (Gold)' },
-        { value: 'SILVER-USDC',    label: 'SILVER-USDC (Silver)' },
-        { value: 'WTIOIL-USDC',    label: 'WTIOIL-USDC (WTI Crude Oil)' },
-        { value: 'BRENTOIL-USDC',  label: 'BRENTOIL-USDC (Brent Crude)' },
-        { value: 'NATGAS-USDC',    label: 'NATGAS-USDC (Natural Gas)' },
-        { value: 'COPPER-USDC',    label: 'COPPER-USDC (Copper)' },
-        { value: 'PLATINUM-USDC',  label: 'PLATINUM-USDC (Platinum)' },
-        { value: 'PALLADIUM-USDC', label: 'PALLADIUM-USDC (Palladium)' },
-        { value: 'URANIUM-USDC',   label: 'URANIUM-USDC (Uranium)' },
-        { value: 'WHEAT-USDC',     label: 'WHEAT-USDC (Wheat)' },
-        { value: 'CORN-USDC',      label: 'CORN-USDC (Corn)' },
-        { value: 'ALUMINIUM-USDC', label: 'ALUMINIUM-USDC (Aluminium)' },
-      ],
-    },
-    {
-      label: 'Indices (HIP-3)',
-      options: [
-        { value: 'SP500-USDC', label: 'SP500-USDC (S&P 500)' },
-        { value: 'JP225-USDC', label: 'JP225-USDC (Nikkei 225)' },
-        { value: 'VIX-USDC',   label: 'VIX-USDC (Volatility Index)' },
-        { value: 'DXY-USDC',    label: 'DXY-USDC (Dollar Index)' },
-        { value: 'XYZ100-USDC', label: 'XYZ100-USDC (Nasdaq-100)' },
-      ],
-    },
-    {
-      label: 'Stocks (HIP-3)',
-      options: [
-        { value: 'TSLA-USDC',  label: 'TSLA-USDC (Tesla)' },
-        { value: 'NVDA-USDC',  label: 'NVDA-USDC (Nvidia)' },
-        { value: 'AAPL-USDC',  label: 'AAPL-USDC (Apple)' },
-        { value: 'META-USDC',  label: 'META-USDC (Meta)' },
-        { value: 'MSFT-USDC',  label: 'MSFT-USDC (Microsoft)' },
-        { value: 'GOOGL-USDC', label: 'GOOGL-USDC (Google)' },
-        { value: 'AMZN-USDC',  label: 'AMZN-USDC (Amazon)' },
-        { value: 'AMD-USDC',   label: 'AMD-USDC (AMD)' },
-        { value: 'NFLX-USDC',  label: 'NFLX-USDC (Netflix)' },
-        { value: 'PLTR-USDC',  label: 'PLTR-USDC (Palantir)' },
-        { value: 'COIN-USDC',  label: 'COIN-USDC (Coinbase)' },
-        { value: 'MSTR-USDC',  label: 'MSTR-USDC (MicroStrategy)' },
-      ],
-    },
-    {
-      label: 'Forex (HIP-3)',
-      options: [
-        { value: 'EUR-USDC', label: 'EUR-USDC (Euro)' },
-        { value: 'JPY-USDC', label: 'JPY-USDC (Japanese Yen)' },
-      ],
-    },
-    {
-      label: 'Other',
-      options: [
-        { value: '__custom__', label: 'Custom symbol…' },
-      ],
-    },
-  ]
 
   return (
     <div

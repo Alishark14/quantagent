@@ -69,7 +69,7 @@ def reconcile_positions(all_bots: list[dict]) -> dict:
     active_exchanges: dict[str, list[dict]] = {}
     for bot in all_bots:
         if bot["status"] == "running":
-            ex = bot.get("exchange", "dydx").lower()
+            ex = bot.get("exchange", "hyperliquid").lower()
             active_exchanges.setdefault(ex, []).append(bot)
 
     if not active_exchanges:
@@ -100,7 +100,7 @@ def reconcile_positions(all_bots: list[dict]) -> dict:
         # Timeframe lookup for all bots on this exchange (any status, for grace period calc)
         symbol_timeframe: dict[str, str] = {}
         for bot in all_bots:
-            if bot.get("exchange", "dydx").lower() == exchange_name:
+            if bot.get("exchange", "hyperliquid").lower() == exchange_name:
                 try:
                     ex_symbol = adapter.to_exchange_symbol(bot["symbol"])
                     symbol_timeframe.setdefault(ex_symbol, bot["timeframe"])

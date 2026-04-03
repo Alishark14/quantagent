@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,20 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.3",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Dashboard & Defaults Fixes",
+        "changes": [
+            "Fix: bot_log_stream WebSocket now tries 3 fallback log paths (mode/symbol, mode/symbolnodash, symbol-only) before waiting",
+            "Add: /api/debug/log-paths endpoint to inspect where log files actually exist",
+            "Fix: trade_outcome_tracker reconcile loop now logs every symbol comparison (trade vs position) for diagnostics",
+            "Fix: reconcile_trades logs has_open_position result for no-match trades before deciding to keep open",
+            "Fix: scheduler log now includes interval dict and 'Next run: immediately' for clarity",
+            "Fix: default exchange changed from 'dydx' to 'hyperliquid' everywhere (config.py, database.py, models.py, BotModal.tsx, app.py, position_guardian.py)",
         ],
     },
     {

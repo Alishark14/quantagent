@@ -136,7 +136,7 @@ class BotCreate(BaseModel):
     forecast_candles: int = 3
     agents_enabled: str = "indicator,pattern,trend"
     llm_model: str = "claude-sonnet-4-20250514"
-    exchange: str = "dydx"
+    exchange: str = "hyperliquid"
     exchange_testnet: int = 1  # auto-set by create endpoint: 1 if paper, 0 if live
 
 

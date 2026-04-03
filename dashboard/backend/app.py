@@ -96,7 +96,7 @@ async def tracker_loop() -> None:
             if open_trades:
                 by_exchange: dict[str, list] = defaultdict(list)
                 for t in open_trades:
-                    by_exchange[t.get("exchange", "dydx")].append(t)
+                    by_exchange[t.get("exchange", "hyperliquid")].append(t)
 
                 for exchange_name, trades in by_exchange.items():
                     try:
@@ -508,6 +508,18 @@ async def get_exchange_status():
 
 # ── WebSocket: Live bot log streaming ─────────────────────────────────────────
 
+@app.get("/api/debug/log-paths")
+async def debug_log_paths():
+    """Show where log files actually are."""
+    import glob as _glob
+    all_logs = _glob.glob(str(PROJECT_ROOT / "trade_logs" / "**" / "*.log"), recursive=True)
+    return {
+        "project_root": str(PROJECT_ROOT),
+        "log_files_found": all_logs,
+        "cwd": os.getcwd(),
+    }
+
+
 @app.websocket("/ws/bots/{bot_id}/logs")
 async def bot_log_stream(websocket: WebSocket, bot_id: str):
     """Stream bot log file in real-time via WebSocket."""
@@ -515,13 +527,35 @@ async def bot_log_stream(websocket: WebSocket, bot_id: str):
 
     bot = get_bot(bot_id)
     if not bot:
-        await websocket.send_json({"error": "Bot not found"})
+        await websocket.send_json({"type": "log", "data": "Bot not found"})
         await websocket.close()
         return
 
     symbol = bot["symbol"].lower()
     mode = bot["trading_mode"]
-    log_path = PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log"
+
+    # Try multiple possible log locations to handle symbol format variations
+    possible_paths = [
+        PROJECT_ROOT / "trade_logs" / mode / symbol / "bot.log",
+        PROJECT_ROOT / "trade_logs" / mode / symbol.replace("-", "") / "bot.log",
+        PROJECT_ROOT / "trade_logs" / symbol / "bot.log",
+    ]
+
+    log_path = None
+    for p in possible_paths:
+        if p.exists():
+            log_path = p
+            break
+
+    if not log_path:
+        log_path = possible_paths[0]
+        logger.info(f"WS logs: No log file found. Tried: {[str(p) for p in possible_paths]}")
+        await websocket.send_json({
+            "type": "log",
+            "data": f"Waiting for log file... (expected: {possible_paths[0]})"
+        })
+    else:
+        logger.info(f"WS logs: Streaming from {log_path}")
 
     logger.info(f"WS log stream: bot={bot_id} symbol={symbol} mode={mode} path={log_path} exists={log_path.exists()}")
 
@@ -896,7 +930,7 @@ def api_emergency_close_all():
 
     all_bots = get_all_bots()
     # Collect distinct exchanges across ALL bots (any status — orphans may exist)
-    exchange_names = {bot.get("exchange", "dydx").lower() for bot in all_bots}
+    exchange_names = {bot.get("exchange", "hyperliquid").lower() for bot in all_bots}
 
     results: dict[str, int] = {"closed": 0, "failed": 0, "orders_cancelled": 0}
 

@@ -28,7 +28,7 @@ const DEFAULTS: FormData = {
   forecast_candles: 3,
   agents_enabled: 'indicator,pattern,trend',
   llm_model: 'claude-sonnet-4-20250514',
-  exchange: 'dydx',
+  exchange: 'hyperliquid',
   exchange_testnet: 1,
 }
 

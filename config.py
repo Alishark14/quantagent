@@ -50,7 +50,7 @@ class TradingConfig:
     LOOKBACK_BARS: int = int(os.getenv("LOOKBACK_BARS", "100"))
 
     # Exchange
-    EXCHANGE: str = os.getenv("EXCHANGE", "dydx")
+    EXCHANGE: str = os.getenv("EXCHANGE", "hyperliquid")
     EXCHANGE_TESTNET: bool = os.getenv("EXCHANGE_TESTNET", "true").lower() in ("true", "1", "yes")
 
     # Data source (public OHLC — no auth needed)

@@ -67,7 +67,12 @@ def reconcile_trades(adapter: ExchangeAdapter, open_trades: list[dict]) -> dict:
             position_exists = False
             current_pos = None
             for p in current_positions:
-                if _symbols_match(trade_symbol, p.symbol, adapter):
+                match = _symbols_match(trade_symbol, p.symbol, adapter)
+                logger.info(
+                    f"TRACKER: Comparing trade '{trade_symbol}' vs "
+                    f"position '{p.symbol}' → match={match}"
+                )
+                if match:
                     position_exists = True
                     current_pos = p
                     break
@@ -87,6 +92,10 @@ def reconcile_trades(adapter: ExchangeAdapter, open_trades: list[dict]) -> dict:
                     summary["errors"] += 1
                     continue
 
+                logger.info(
+                    f"TRACKER: No position match for {trade_symbol}, "
+                    f"double-check has_open_position={still_open}"
+                )
                 if still_open:
                     logger.warning(
                         f"TRACKER: Symbol match failed but has_open_position=True "

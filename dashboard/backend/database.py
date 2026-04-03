@@ -49,7 +49,7 @@ def init_db() -> None:
                 agents_enabled TEXT NOT NULL DEFAULT 'indicator,pattern,trend',
                 llm_model TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514',
 
-                exchange TEXT NOT NULL DEFAULT 'dydx',
+                exchange TEXT NOT NULL DEFAULT 'hyperliquid',
                 exchange_testnet INTEGER NOT NULL DEFAULT 1,
 
                 status TEXT NOT NULL DEFAULT 'stopped',
@@ -242,7 +242,7 @@ def create_bot(config: dict) -> dict:
         "forecast_candles": config.get("forecast_candles", 3),
         "agents_enabled": config.get("agents_enabled", "indicator,pattern,trend"),
         "llm_model": config.get("llm_model", "claude-sonnet-4-20250514"),
-        "exchange": config.get("exchange", "dydx"),
+        "exchange": config.get("exchange", "hyperliquid"),
         "exchange_testnet": config.get("exchange_testnet", 1),
         "status": "stopped",
         "pid": None,

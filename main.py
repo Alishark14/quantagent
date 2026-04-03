@@ -285,7 +285,7 @@ def main():
         )
 
         try:
-            logger.info(f"Scheduler started. Running every {timeframe}.")
+            logger.info(f"Scheduler started. Running every {timeframe}. Interval: {interval}. Next run: immediately")
             scheduler.start()
         except (KeyboardInterrupt, SystemExit):
             logger.info("Scheduler stopped.")

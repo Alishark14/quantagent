@@ -149,6 +149,7 @@ export interface Bot {
   daily_loss_usd: number
   created_at: string
   updated_at: string
+  log_path?: string | null
 }
 
 export interface ExchangeStatus {

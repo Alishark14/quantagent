@@ -267,6 +267,7 @@ def create_bot(config: dict) -> dict:
         "daily_loss_reset_date": None,
         "created_at": now,
         "updated_at": now,
+        "log_path": None,
     }
     with _get_conn() as conn:
         conn.execute(
@@ -278,7 +279,7 @@ def create_bot(config: dict) -> dict:
                 :agents_enabled, :llm_model, :exchange, :exchange_testnet,
                 :status, :pid, :last_heartbeat, :last_error,
                 :consecutive_losses, :daily_loss_usd, :daily_loss_reset_date,
-                :created_at, :updated_at
+                :created_at, :updated_at, :log_path
             )""",
             bot,
         )

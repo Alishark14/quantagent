@@ -188,3 +188,4 @@ class BotResponse(BaseModel):
     daily_loss_usd: float
     created_at: str
     updated_at: str
+    log_path: Optional[str] = None

@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.9"
+__version__ = "0.6.0"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,18 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.6.0",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Live/Paper Network Split",
+        "changes": [
+            "Fix: position_sync.py groups trades by (exchange, trading_mode) — live trades check mainnet, paper trades check testnet",
+            "Fix: get_cached_positions() now takes is_testnet param; cache key is '{exchange}_{mainnet|testnet}' to prevent position sets from colliding",
+            "Fix: sync_trade_statuses() and sync_and_update_db() both use defaultdict grouping by (exchange, is_testnet)",
+            "Fix: adapter created with correct testnet flag via Config.EXCHANGE_TESTNET swap + factory clear_cache() pattern",
         ],
     },
     {

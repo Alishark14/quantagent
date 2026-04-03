@@ -247,25 +247,42 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
-  const KNOWN_SYMBOLS = [
-    // Crypto
-    'BTC-USDC', 'ETH-USDC', 'SOL-USDC', 'DOGE-USDC', 'AVAX-USDC', 'LINK-USDC', 'HYPE-USDC', 'XPL-USDC',
-    // Commodities
-    'GOLD-USDC', 'SILVER-USDC', 'WTIOIL-USDC', 'BRENTOIL-USDC',
-    'NATGAS-USDC', 'COPPER-USDC', 'PLATINUM-USDC', 'PALLADIUM-USDC',
-    'URANIUM-USDC', 'WHEAT-USDC', 'CORN-USDC', 'ALUMINIUM-USDC',
-    // Indices
-    'SP500-USDC', 'JP225-USDC', 'VIX-USDC', 'DXY-USDC', 'XYZ100-USDC',
-    // Stocks
-    'TSLA-USDC', 'NVDA-USDC', 'AAPL-USDC', 'META-USDC', 'MSFT-USDC', 'GOOGL-USDC',
-    'AMZN-USDC', 'AMD-USDC', 'NFLX-USDC', 'PLTR-USDC', 'COIN-USDC', 'MSTR-USDC',
-    // Forex
-    'EUR-USDC', 'JPY-USDC',
-  ]
-  const [customSymbol, setCustomSymbol] = useState(
-    !KNOWN_SYMBOLS.includes(form.symbol)
+  const [symbolGroups, setSymbolGroups] = useState(SYMBOL_GROUPS)
+  const [knownSymbols, setKnownSymbols] = useState<string[]>(() =>
+    SYMBOL_GROUPS.flatMap(g => g.options.map(o => o.value)).filter(v => v !== '__custom__')
   )
+  const [customSymbol, setCustomSymbol] = useState(() => {
+    const known = SYMBOL_GROUPS.flatMap(g => g.options.map(o => o.value)).filter(v => v !== '__custom__')
+    return !known.includes(form.symbol)
+  })
   const [showAdvanced, setShowAdvanced] = useState(false)
+
+  // Fetch live symbol list from backend (built from exchange markets)
+  useEffect(() => {
+    api.getAvailableSymbols().then(syms => {
+      if (!syms || !syms.length) return
+      // Build grouped options from API response
+      const byCategory: Record<string, { value: string; label: string }[]> = {}
+      for (const s of syms) {
+        const cat = s.category || 'Other'
+        if (!byCategory[cat]) byCategory[cat] = []
+        byCategory[cat].push({ value: s.value, label: s.label })
+      }
+      const order = ['Crypto', 'Commodities', 'Indices', 'Stocks', 'Forex', 'Energy', 'Other']
+      const groups = order
+        .filter(c => byCategory[c])
+        .map(c => ({ label: c, options: byCategory[c] }))
+      // Always append custom option
+      groups.push({ label: 'Other', options: [{ value: '__custom__', label: 'Custom symbol…' }] })
+      setSymbolGroups(groups)
+      const all = syms.map(s => s.value)
+      setKnownSymbols(all)
+      // If current symbol isn't in new list, switch to custom input
+      if (form.symbol && !all.includes(form.symbol)) {
+        setCustomSymbol(true)
+      }
+    }).catch(() => { /* keep static groups on error */ })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep agents_enabled in sync with checkboxes
   useEffect(() => {
@@ -430,7 +447,7 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                       type="button"
                       onClick={() => {
                         setCustomSymbol(false)
-                        if (!KNOWN_SYMBOLS.includes(form.symbol)) set('symbol', 'BTC-USDC')
+                        if (!knownSymbols.includes(form.symbol)) set('symbol', 'BTC-USDC')
                       }}
                       className="text-xs text-text-muted hover:text-text-primary px-2"
                     >
@@ -444,7 +461,7 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
                       if (v === '__custom__') { setCustomSymbol(true); set('symbol', '') }
                       else set('symbol', v)
                     }}
-                    groups={SYMBOL_GROUPS}
+                    groups={symbolGroups}
                   />
                 )}
                 <ErrMsg msg={errors.symbol} />

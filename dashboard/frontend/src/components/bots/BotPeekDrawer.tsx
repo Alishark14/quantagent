@@ -37,6 +37,9 @@ interface BotEvent {
   // cycle_cost
   total_cost?: number
   agents?: Record<string, number>
+  // cycle_skip
+  reason?: string
+  message?: string
 }
 
 interface Props {
@@ -217,6 +220,19 @@ function CycleStartCard({ event }: { event: BotEvent }) {
   )
 }
 
+function CycleSkipCard({ event }: { event: BotEvent }) {
+  return (
+    <div className="flex items-center gap-2 px-1 py-0.5 opacity-60">
+      <span className="text-sm">⏭️</span>
+      <span className="text-[#6b7280] text-xs">
+        Cycle skipped — position open on{' '}
+        <span className="font-mono text-[#9ca3af]">{event.symbol}</span>
+      </span>
+      <span className="text-[#4b5563] text-[10px] ml-auto shrink-0">{formatTime(event.timestamp)}</span>
+    </div>
+  )
+}
+
 function CycleCostCard({ event }: { event: BotEvent }) {
   return (
     <div className="flex items-center gap-2 px-1 py-0.5">
@@ -236,6 +252,7 @@ function EventCard({ event }: { event: BotEvent }) {
     case 'trade_execution': return <TradeExecutionCard event={event} />
     case 'sl_tp_placed': return <SlTpCard event={event} />
     case 'cycle_start': return <CycleStartCard event={event} />
+    case 'cycle_skip': return <CycleSkipCard event={event} />
     case 'cycle_cost': return <CycleCostCard event={event} />
     default: return null
   }

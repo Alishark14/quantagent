@@ -16,9 +16,9 @@ const DEFAULTS: FormData = {
   symbol: 'BTC-USDC',
   market_type: 'perpetual',
   timeframe: '1h',
-  budget_usd: 500,
+  budget_usd: 100,
   max_concurrent_positions: 1,
-  trading_mode: 'paper',
+  trading_mode: 'live',
   atr_multiplier: 1.5,
   atr_length: 14,
   rr_ratio_min: 1.2,
@@ -29,7 +29,7 @@ const DEFAULTS: FormData = {
   agents_enabled: 'indicator,pattern,trend',
   llm_model: 'claude-sonnet-4-20250514',
   exchange: 'hyperliquid',
-  exchange_testnet: 1,
+  exchange_testnet: 0,
 }
 
 function parseAgents(str: string): { indicator: boolean; pattern: boolean; trend: boolean } {
@@ -249,13 +249,13 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
   const [apiError, setApiError] = useState<string | null>(null)
   const KNOWN_SYMBOLS = [
     // Crypto
-    'BTC-USDC', 'ETH-USDC', 'SOL-USDC', 'DOGE-USDC', 'AVAX-USDC', 'LINK-USDC', 'HYPE-USDC',
+    'BTC-USDC', 'ETH-USDC', 'SOL-USDC', 'DOGE-USDC', 'AVAX-USDC', 'LINK-USDC', 'HYPE-USDC', 'XPL-USDC',
     // Commodities
     'GOLD-USDC', 'SILVER-USDC', 'WTIOIL-USDC', 'BRENTOIL-USDC',
     'NATGAS-USDC', 'COPPER-USDC', 'PLATINUM-USDC', 'PALLADIUM-USDC',
     'URANIUM-USDC', 'WHEAT-USDC', 'CORN-USDC', 'ALUMINIUM-USDC',
     // Indices
-    'SP500-USDC', 'JP225-USDC', 'VIX-USDC', 'DXY-USDC',
+    'SP500-USDC', 'JP225-USDC', 'VIX-USDC', 'DXY-USDC', 'XYZ100-USDC',
     // Stocks
     'TSLA-USDC', 'NVDA-USDC', 'AAPL-USDC', 'META-USDC', 'MSFT-USDC', 'GOOGL-USDC',
     'AMZN-USDC', 'AMD-USDC', 'NFLX-USDC', 'PLTR-USDC', 'COIN-USDC', 'MSTR-USDC',
@@ -324,6 +324,7 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
         { value: 'AVAX-USDC', label: 'AVAX-USDC (Avalanche)' },
         { value: 'LINK-USDC', label: 'LINK-USDC (Chainlink)' },
         { value: 'HYPE-USDC', label: 'HYPE-USDC (Hyperliquid)' },
+        { value: 'XPL-USDC',  label: 'XPL-USDC (Plasma)' },
       ],
     },
     {
@@ -349,7 +350,8 @@ export default function BotModal({ bot, onClose, onSaved }: Props) {
         { value: 'SP500-USDC', label: 'SP500-USDC (S&P 500)' },
         { value: 'JP225-USDC', label: 'JP225-USDC (Nikkei 225)' },
         { value: 'VIX-USDC',   label: 'VIX-USDC (Volatility Index)' },
-        { value: 'DXY-USDC',   label: 'DXY-USDC (Dollar Index)' },
+        { value: 'DXY-USDC',    label: 'DXY-USDC (Dollar Index)' },
+        { value: 'XYZ100-USDC', label: 'XYZ100-USDC (Nasdaq-100)' },
       ],
     },
     {

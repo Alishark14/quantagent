@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.3"
+__version__ = "0.5.5"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,28 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.5",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "New Symbols",
+        "changes": [
+            "Add: XPL-USDC (Plasma) to Crypto group in bot symbol dropdown",
+            "Add: XYZ100-USDC (Nasdaq-100 HIP-3 index perp by trade.xyz) to Indices group",
+        ],
+    },
+    {
+        "version": "0.5.4",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "API Cost Optimization",
+        "changes": [
+            "Opt: early-exit position check before LLM agents — saves ~$0.033/cycle when position is open",
+            "Add: _send_heartbeat() helper extracted from run_cycle for reuse in skip path",
+            "Add: emit_cycle_skip() in event_emitter — emits cycle_skip event to dashboard",
+            "Add: CycleSkipCard in BotPeekDrawer — muted row showing skipped cycle with symbol + timestamp",
         ],
     },
     {

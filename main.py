@@ -51,6 +51,20 @@ logging.basicConfig(
 logger = logging.getLogger("quantagent")
 
 
+def _send_heartbeat() -> None:
+    """Send heartbeat to dashboard if running as a managed bot."""
+    bot_id = os.getenv("BOT_ID")
+    if bot_id:
+        import requests as _requests
+        try:
+            _requests.post(
+                f"http://localhost:8001/api/internal/heartbeat/{bot_id}",
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+
 def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
     """Run one analysis cycle for all symbols."""
     for symbol in symbols:
@@ -60,6 +74,23 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
             logger.info(f"Time: {datetime.now(timezone.utc).isoformat()}")
             logger.info(f"{'='*60}")
 
+            # EARLY EXIT: skip LLM analysis if a position is already open
+            if execute_trades:
+                try:
+                    from exchanges import get_adapter
+                    adapter = get_adapter()
+                    if adapter.has_open_position(symbol):
+                        logger.info(
+                            f"Position already open on {symbol} — skipping LLM analysis. "
+                            f"Saved ~$0.033 in API costs. Will check again next cycle."
+                        )
+                        from utils.event_emitter import emit_cycle_skip
+                        emit_cycle_skip(symbol)
+                        _send_heartbeat()
+                        continue
+                except Exception as e:
+                    logger.warning(f"Position check failed for {symbol}: {e} — proceeding with analysis")
+
             result = run_analysis(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -67,16 +98,7 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
             )
 
             # Send heartbeat to dashboard if running as a managed bot
-            bot_id = os.getenv("BOT_ID")
-            if bot_id:
-                import requests as _requests
-                try:
-                    _requests.post(
-                        f"http://localhost:8001/api/internal/heartbeat/{bot_id}",
-                        timeout=5,
-                    )
-                except Exception:
-                    pass
+            _send_heartbeat()
 
             # Print summary
             decision = result.get("decision", {})

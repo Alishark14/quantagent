@@ -110,6 +110,19 @@ def emit_sl_tp_placed(sl_order_id: str = None, tp_order_id: str = None,
     })
 
 
+def emit_cycle_skip(symbol: str):
+    """Emit when a cycle is skipped because a position is already open."""
+    emit_event({
+        "type": "cycle_skip",
+        "reason": "position_open",
+        "symbol": symbol,
+        "message": (
+            f"Position already open on {symbol}. "
+            f"Waiting for SL/TP to trigger. Saved ~$0.033 in API costs."
+        ),
+    })
+
+
 def emit_cycle_cost(total_cost: float, agent_costs: dict):
     """Emit cycle cost summary."""
     emit_event({

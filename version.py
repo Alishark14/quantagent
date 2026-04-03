@@ -1,6 +1,6 @@
 """QuantAgent version information and API cost utilities."""
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 __version_date__ = "2026.04.03"
 __version_full__ = f"v{__version__} ({__version_date__})"
 __phase__ = "pre-production"  # "pre-production", "beta", "production"
@@ -151,6 +151,18 @@ VERSION_HISTORY = [
             "P&L calculation fix (actual fill price, not OHLCV close)",
             "Software versioning (SemVer + calendar)",
             "API cost tracking with per-agent breakdown",
+        ],
+    },
+    {
+        "version": "0.5.2",
+        "date": "2026.04.03",
+        "phase": "pre-production",
+        "name": "Reconciler Symbol Matching",
+        "changes": [
+            "Fix: trade_outcome_tracker reconciler was comparing p.symbol (CCXT format: 'ETH/USDC:USDC') directly to trade symbol (internal format: 'ETH-USDC') — always failed, every trade marked closed",
+            "Add _symbols_match() helper with 3-strategy fallback: direct match → to_exchange_symbol() conversion → base currency extraction",
+            "Add TRACKER debug logging: logs all exchange positions and open trades before each reconciliation cycle for diagnostics",
+            "Improve double-check log message to explicitly say 'Symbol match failed but has_open_position=True' for clearer diagnostics",
         ],
     },
     {

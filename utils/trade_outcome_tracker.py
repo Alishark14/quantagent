@@ -48,39 +48,49 @@ def reconcile_trades(adapter: ExchangeAdapter, open_trades: list[dict]) -> dict:
         logger.warning("TRACKER: Positions response is None — skipping reconciliation")
         return summary
 
+    logger.info(
+        f"TRACKER: Checking {len(open_trades)} open trades against "
+        f"{len(current_positions)} positions on {adapter.name}"
+    )
+    for p in current_positions:
+        logger.info(f"TRACKER: Exchange position: {p.symbol} {p.side} {p.size}")
+    for t in open_trades:
+        logger.info(f"TRACKER: Open trade: {t['symbol']} {t.get('direction', '?')}")
+
     for trade in open_trades:
         try:
             trade_symbol = trade["symbol"]
-            ex_symbol = adapter.to_exchange_symbol(trade_symbol)
 
-            # Check if this trade's position still exists on exchange
+            # Check if this trade's position still exists on exchange.
+            # Use _symbols_match() to handle format differences across exchanges
+            # (e.g. internal "ETH-USDC" vs CCXT "ETH/USDC:USDC" vs dYdX "ETH-USD").
             position_exists = False
             current_pos = None
             for p in current_positions:
-                if p.symbol == ex_symbol:
+                if _symbols_match(trade_symbol, p.symbol, adapter):
                     position_exists = True
                     current_pos = p
                     break
 
             if not position_exists:
                 # Double-check with a direct query before assuming closure.
-                # get_open_positions() could miss a position due to API inconsistencies.
+                # get_open_positions() could miss a position due to API inconsistencies
+                # or symbol format differences not caught by _symbols_match.
                 try:
                     lookup = trade.get("symbol", "")
                     still_open = adapter.has_open_position(lookup) if lookup else False
                 except Exception as check_err:
                     logger.warning(
-                        f"TRACKER: Double-check for {trade.get('id')} failed: {check_err}. "
-                        f"Skipping to avoid false positive."
+                        f"TRACKER: Can't verify {trade['symbol']} (trade {trade.get('id')}) "
+                        f"— keeping open: {check_err}"
                     )
                     summary["errors"] += 1
                     continue
 
                 if still_open:
                     logger.warning(
-                        f"TRACKER: Conflicting data for {trade.get('id')} — "
-                        f"get_open_positions says closed but has_open_position says open. "
-                        f"Keeping as open."
+                        f"TRACKER: Symbol match failed but has_open_position=True "
+                        f"for {trade['symbol']} (trade {trade.get('id')}). Keeping open."
                     )
                     summary["trades_updated"] += 1
                     continue
@@ -138,6 +148,36 @@ def reconcile_trades(adapter: ExchangeAdapter, open_trades: list[dict]) -> dict:
         logger.info(f"TRACKER: Reconciliation summary: {summary}")
 
     return summary
+
+
+def _symbols_match(trade_symbol: str, position_symbol: str, adapter: ExchangeAdapter) -> bool:
+    """Check if a trade symbol matches a position symbol across format differences.
+
+    Handles:
+    - Trade internal format: "ETH-USDC"
+    - CCXT perp format:      "ETH/USDC:USDC"
+    - dYdX indexer format:   "ETH-USD"
+    """
+    # Direct match
+    if trade_symbol == position_symbol:
+        return True
+
+    # Convert trade symbol to exchange format and compare
+    try:
+        ex_symbol = adapter.to_exchange_symbol(trade_symbol)
+        if ex_symbol == position_symbol:
+            return True
+    except Exception:
+        pass
+
+    # Extract base currency and compare as last resort
+    # "ETH-USDC" → "ETH",  "ETH/USDC:USDC" → "ETH",  "XYZ-GOLD/USDC:USDC" → "XYZ-GOLD"
+    trade_base = trade_symbol.split("-")[0]
+    pos_base = position_symbol.split("/")[0].split("-")[-1] if "/" in position_symbol else position_symbol.split("-")[0]
+    if trade_base and trade_base == pos_base:
+        return True
+
+    return False
 
 
 def _find_exit_fill(adapter: ExchangeAdapter, trade: dict) -> dict | None:

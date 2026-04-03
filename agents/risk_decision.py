@@ -222,6 +222,7 @@ def risk_decision_agent_node(state: dict) -> dict:
     memory = load_memory(bot_id)
     level2 = get_level2_context(bot_id, symbol)
     memory_context = format_memory_for_prompt(memory, level2, symbol)
+    logger.info(f"DecisionAgent memory context:\n{memory_context}")
 
     logger.info("DecisionAgent: Aggregating reports and making decision...")
 

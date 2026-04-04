@@ -532,11 +532,12 @@ Based on the above reports AND your memory context, issue your trading decision 
     decision["uses_trailing_stop"] = uses_trailing
     decision.setdefault("sl_adjustment", "maintain")
 
+    tp2_label = "Trailing" if uses_trailing else f"TP2: {decision['take_profit_2']}"
     logger.info(
         f"DecisionAgent: {action} @ {decision['entry_price']} | "
         f"SL: {decision['stop_loss']} ({sl_type}) | "
         f"TP1: {decision['take_profit_1']} (50%) | "
-        f"{'Trailing' if uses_trailing else f'TP2: {decision[\"take_profit_2\"]}'} (50%) | "
+        f"{tp2_label} (50%) | "
         f"RR: {decision['risk_reward_ratio']} | ATR×{atr_multiplier:.2f}={atr_value:.4f}"
     )
 

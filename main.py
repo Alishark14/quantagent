@@ -190,40 +190,50 @@ def run_cycle(symbols: list[str], timeframe: str, execute_trades: bool):
             logger.info(f"{'='*60}")
 
             if execute_trades:
-                memory = load_memory(bot_id)
+                try:
+                    memory = load_memory(bot_id)
+                except Exception as mem_err:
+                    logger.warning(f"Memory load failed (using empty): {mem_err}")
+                    memory = {
+                        "recent_cycles": [], "current_position": None,
+                        "pyramid_count": 0, "pyramid_entries": [],
+                        "last_trade_result": None,
+                    }
 
                 # ── Run full LLM analysis ──────────────────────────────────────
                 result = _run_full_analysis(symbol, timeframe, execute_trades=True)
 
                 # ── Update memory with this cycle's result ─────────────────────
-                if result:
-                    decision = result.get("decision", {}) or {}
-                    trade = result.get("trade_result", {}) or {}
-                    cycle_action = decision.get("decision", "SKIP") if isinstance(decision, dict) else "SKIP"
+                try:
+                    if result:
+                        decision = result.get("decision", {}) or {}
+                        trade = result.get("trade_result", {}) or {}
+                        cycle_action = decision.get("decision", "SKIP") if isinstance(decision, dict) else "SKIP"
 
-                    # For ADD/CLOSE actions, use current price as "entry_price" in memory
-                    entry_price = decision.get("entry_price", 0) if isinstance(decision, dict) else 0
-                    position_size = decision.get("position_size_usd", 0) if isinstance(decision, dict) else 0
+                        entry_price = decision.get("entry_price", 0) if isinstance(decision, dict) else 0
+                        position_size = decision.get("position_size_usd", 0) if isinstance(decision, dict) else 0
 
-                    # Only count a new position open if trade was actually executed
-                    if cycle_action in ("LONG", "SHORT") and trade.get("status") != "executed":
-                        cycle_action = "SKIP"  # Trade didn't go through — don't record as open
+                        # Only count a new position open if trade was actually executed
+                        if cycle_action in ("LONG", "SHORT") and trade.get("status") != "executed":
+                            cycle_action = "SKIP"
 
-                    memory = update_memory_after_cycle(
-                        memory=memory,
-                        cycle_result={
-                            "decision": cycle_action,
-                            "indicator_signal": result.get("indicator_signal", "neutral"),
-                            "pattern_signal": result.get("pattern_signal", "neutral"),
-                            "trend_signal": result.get("trend_signal", "neutral"),
-                            "entry_price": entry_price,
-                            "position_size": position_size,
-                            "unrealized_pnl": None,
-                        },
-                        symbol=symbol,
-                        timeframe=timeframe,
-                    )
-                    save_memory(bot_id, memory)
+                        memory = update_memory_after_cycle(
+                            memory=memory,
+                            cycle_result={
+                                "decision": cycle_action,
+                                "indicator_signal": result.get("indicator_signal", "neutral"),
+                                "pattern_signal": result.get("pattern_signal", "neutral"),
+                                "trend_signal": result.get("trend_signal", "neutral"),
+                                "entry_price": entry_price,
+                                "position_size": position_size,
+                                "unrealized_pnl": None,
+                            },
+                            symbol=symbol,
+                            timeframe=timeframe,
+                        )
+                        save_memory(bot_id, memory)
+                except Exception as mem_err:
+                    logger.warning(f"Memory update/save failed (non-fatal): {mem_err}")
 
             else:
                 # Dry-run: no memory, no position check
